@@ -6,6 +6,7 @@ Usage:
     python -m traffic_agent.cli run --scenario grid_3x3
     python -m traffic_agent.cli compare
     python -m traffic_agent.cli dashboard --port 8080
+    python -m traffic_agent.cli simulate --steps 100
 """
 
 import argparse
@@ -64,6 +65,41 @@ def create_grid_3x3_graph() -> Dict[str, List[str]]:
             if row < 2: neighbors.append(f"ix_{row+1}_{col}")
             graph[ix_id] = neighbors
     return graph
+
+
+def run_dashboard(args) -> None:
+    """Start the SSE dashboard server."""
+    import uvicorn
+    from traffic_agent.api.sse_server import app
+
+    print(f"🚦 Starting dashboard at http://{args.host}:{args.port}")
+    print(f"   Open http://localhost:{args.port} in your browser")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+
+
+def run_simulate(args) -> None:
+    """Run simulation with SSE event streaming."""
+    import uvicorn
+    import threading
+    from traffic_agent.api.sse_server import app, get_collector
+    from traffic_agent.visualization.runner import SimulationRunner
+
+    collector = get_collector()
+
+    def run_sim():
+        import time
+        time.sleep(2)  # Wait for server to start
+        runner = SimulationRunner(collector=collector)
+        runner.run(steps=args.steps)
+
+    # Start simulation in background thread
+    t = threading.Thread(target=run_sim, daemon=True)
+    t.start()
+
+    print(f"🚦 Starting simulation with SSE at http://0.0.0.0:{args.port}")
+    print(f"   Steps: {args.steps}, Speed: {args.speed}x")
+    print(f"   Open http://localhost:{args.port} in your browser")
+    uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
 
 
 def run_simulation(args) -> None:
@@ -249,6 +285,19 @@ def main():
     compare_parser = subparsers.add_parser("compare", help="Compare LLM vs Fixed")
     compare_parser.add_argument("--model", default="gpt-4o-mini", help="LLM model")
     compare_parser.set_defaults(func=compare_timing)
+
+    # Dashboard command
+    dash_parser = subparsers.add_parser("dashboard", help="Start SSE dashboard server")
+    dash_parser.add_argument("--port", type=int, default=8080, help="Server port")
+    dash_parser.add_argument("--host", default="0.0.0.0", help="Server host")
+    dash_parser.set_defaults(func=run_dashboard)
+
+    # Simulate command (run + emit SSE events)
+    sim_parser = subparsers.add_parser("simulate", help="Run simulation with SSE events")
+    sim_parser.add_argument("--steps", type=int, default=100, help="Simulation steps")
+    sim_parser.add_argument("--speed", type=float, default=1.0, help="Simulation speed multiplier")
+    sim_parser.add_argument("--port", type=int, default=8080, help="Dashboard server port")
+    sim_parser.set_defaults(func=run_simulate)
     
     args = parser.parse_args()
     
