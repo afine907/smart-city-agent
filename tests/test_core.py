@@ -1,279 +1,324 @@
 """
-Tests for Traffic Simulation Engine
+Tests for LLM Traffic Controller
 """
 
+import json
 import numpy as np
 import pytest
 
-from traffic_agent.agents.intersection import AgentConfig, IntersectionAgent
-from traffic_agent.coordination.coordinator import (
-    AgentState,
-    ConsensusProtocol,
-    CoordinationLayer,
-    MessageQueue,
-    MessageType,
-    AgentMessage,
-)
-from traffic_agent.simulation.engine import (
-    Intersection,
-    RoadNetwork,
-    SimulationConfig,
-    SimulationEngine,
-    Vehicle,
-)
+from traffic_agent.llm.parser import ResponseParser, TrafficDecision, VALID_ACTIONS, VALID_PHASES
+from traffic_agent.simulation.engine import SimulationEngine, SimulationConfig
+from traffic_agent.tools.traffic_tools import IntersectionState
+from traffic_agent.crew.traffic_crew import DecisionCache
+
+
+class TestResponseParser:
+    """Test LLM response parsing."""
+    
+    def test_parse_valid_json(self):
+        response = json.dumps({
+            "action": "extend_green",
+            "phase": "NS_GREEN",
+            "duration": 30,
+            "reasoning": "北方向车多，需要延长绿灯",
+            "confidence": 0.85,
+        })
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.action == "extend_green"
+        assert decision.phase == "NS_GREEN"
+        assert decision.duration == 30
+        assert "北方向" in decision.reasoning
+    
+    def test_parse_json_in_codeblock(self):
+        response = """```json
+{
+    "action": "switch_phase",
+    "phase": "EW_GREEN",
+    "duration": 25,
+    "reasoning": "东西方向等待时间过长",
+    "confidence": 0.7
+}
+```"""
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.action == "switch_phase"
+        assert decision.phase == "EW_GREEN"
+    
+    def test_parse_with_extra_text(self):
+        response = """根据当前路况分析，我决定延长南北绿灯。
+
+```json
+{
+    "action": "extend_green",
+    "phase": "NS_GREEN",
+    "duration": 20,
+    "reasoning": "南北方向车流量大",
+    "confidence": 0.9
+}
+```
+
+以上是我的决策。"""
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.duration == 20
+    
+    def test_parse_invalid_json(self):
+        response = "这不是JSON格式"
+        decision = ResponseParser.parse(response)
+        assert decision is None
+    
+    def test_parse_invalid_action(self):
+        response = json.dumps({
+            "action": "invalid_action",
+            "phase": "NS_GREEN",
+            "duration": 20,
+            "reasoning": "test",
+            "confidence": 0.5,
+        })
+        
+        decision = ResponseParser.parse(response)
+        assert decision is None
+    
+    def test_parse_duration_out_of_range(self):
+        response = json.dumps({
+            "action": "extend_green",
+            "phase": "NS_GREEN",
+            "duration": 200,  # Too long
+            "reasoning": "test",
+            "confidence": 0.5,
+        })
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.duration == 60  # Clamped to max
+    
+    def test_parse_duration_too_short(self):
+        response = json.dumps({
+            "action": "extend_green",
+            "phase": "NS_GREEN",
+            "duration": 3,  # Too short
+            "reasoning": "test",
+            "confidence": 0.5,
+        })
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.duration == 10  # Clamped to min
+    
+    def test_parse_chinese_phase(self):
+        response = json.dumps({
+            "action": "switch_phase",
+            "phase": "南北绿灯",
+            "duration": 20,
+            "reasoning": "test",
+            "confidence": 0.5,
+        })
+        
+        decision = ResponseParser.parse(response)
+        assert decision is not None
+        assert decision.phase == "NS_GREEN"
+    
+    def test_fallback(self):
+        decision = ResponseParser.fallback("test error")
+        assert decision.action == "extend_green"
+        assert decision.phase == "NS_GREEN"
+        assert decision.duration == 15
+        assert decision.confidence == 0.3
+    
+    def test_decision_to_dict(self):
+        decision = TrafficDecision(
+            action="extend_green",
+            phase="NS_GREEN",
+            duration=20,
+            reasoning="测试",
+            confidence=0.8,
+        )
+        
+        d = decision.to_dict()
+        assert d["action"] == "extend_green"
+        assert d["duration"] == 20
+
+
+class TestIntersectionState:
+    """Test intersection state formatting."""
+    
+    def test_state_to_text(self):
+        state = IntersectionState(
+            intersection_id="test_ix",
+            timestamp=100.0,
+            queue_north=15,
+            queue_south=10,
+            queue_east=5,
+            queue_west=3,
+            wait_north=30.0,
+            wait_south=20.0,
+            wait_east=10.0,
+            wait_west=6.0,
+            current_phase="NS_GREEN",
+            phase_duration=45.0,
+        )
+        
+        text = state.to_text()
+        assert "test_ix" in text
+        assert "15辆" in text
+        assert "NS_GREEN" in text
+    
+    def test_get_max_queue(self):
+        state = IntersectionState(
+            intersection_id="test",
+            timestamp=0,
+            queue_north=10,
+            queue_south=5,
+            queue_east=20,
+            queue_west=3,
+        )
+        
+        assert state.get_max_queue() == 20
+    
+    def test_get_total_queue(self):
+        state = IntersectionState(
+            intersection_id="test",
+            timestamp=0,
+            queue_north=10,
+            queue_south=5,
+            queue_east=20,
+            queue_west=3,
+        )
+        
+        assert state.get_total_queue() == 38
 
 
 class TestSimulationEngine:
-    """Test core simulation engine."""
+    """Test simulation engine."""
     
-    def test_single_intersection_creation(self):
+    def test_create_single_intersection(self):
         engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
         
-        assert "ix_0" in engine.road_network.intersections
-        assert len(engine.road_network.intersections) == 1
+        assert "ix_0" in engine.network.intersections
     
-    def test_observation_generation(self):
+    def test_get_state(self):
         engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
         
-        obs = engine.get_observation("ix_0")
-        assert obs.intersection_id == "ix_0"
-        assert len(obs.queue_lengths) == 4
-        assert obs.current_phase == 0
+        state = engine.get_state("ix_0")
+        assert state.intersection_id == "ix_0"
+        assert state.current_phase == "NS_GREEN"
     
     def test_step_advances_time(self):
         engine = SimulationEngine(SimulationConfig(dt=1.0, seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
         
-        initial_time = engine.time
         engine.step()
-        assert engine.time == initial_time + 1.0
+        assert engine.time == 1.0
     
-    def test_action_changes_phase(self):
+    def test_apply_decision(self):
         engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
         
-        engine.apply_action("ix_0", phase=2, duration=30)
-        assert engine.road_network.intersections["ix_0"].current_phase == 2
+        engine.apply_decision("ix_0", {"phase": "EW_GREEN"})
+        ix = engine.network.intersections["ix_0"]
+        assert ix.current_phase == "EW_GREEN"
     
-    def test_metrics_collection(self):
+    def test_connect_intersections(self):
         engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
+        engine.add_intersection("ix_1")
+        engine.connect("ix_0", "ix_1")
         
-        engine.run(num_steps=100)
-        metrics = engine.metrics.get_summary()
-        
-        assert "avg_wait_time" in metrics
-        assert "throughput" in metrics
+        assert "ix_1" in engine.network.neighbors("ix_0")
     
     def test_reset(self):
         engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        engine.add_intersection("ix_0")
         
-        engine.run(num_steps=50)
+        engine.step()
+        engine.step()
         engine.reset()
         
         assert engine.time == 0.0
-        assert engine.step_count == 0
     
-    def test_grid_connection(self):
-        engine = SimulationEngine(SimulationConfig(seed=42))
+    def test_vehicles_generated(self):
+        engine = SimulationEngine(SimulationConfig(
+            seed=42, arrival_rate=2.0, road_length=50.0
+        ))
+        engine.add_intersection("ix_0")
         
-        for i in range(4):
-            engine.add_intersection(Intersection(id=f"ix_{i}"))
+        for _ in range(20):
+            engine.step()
         
-        engine.connect("ix_0", "ix_1")
-        engine.connect("ix_1", "ix_2")
-        
-        neighbors = engine.road_network.get_neighbors("ix_0")
-        assert "ix_1" in neighbors
-        assert "ix_2" not in neighbors
+        ix = engine.network.intersections["ix_0"]
+        # Check that vehicles were generated (some may have passed through)
+        assert ix.total_served > 0 or ix.get_total_queue() > 0
 
 
-class TestIntersectionAgent:
-    """Test RL intersection agent."""
+class TestDecisionCache:
+    """Test decision caching."""
     
-    def test_agent_creation(self):
-        agent = IntersectionAgent(agent_id="ix_0", num_approaches=4)
-        assert agent.agent_id == "ix_0"
-        assert agent.is_ready
-    
-    def test_observation_and_action(self):
-        engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+    def test_cache_set_get(self):
+        cache = DecisionCache()
         
-        agent = IntersectionAgent(agent_id="ix_0", num_approaches=4)
-        obs = engine.get_observation("ix_0")
-        
-        agent.observe(obs)
-        action = agent.act()
-        
-        assert 0 <= action.phase < 4
-        assert action.min_green <= action.duration <= action.max_green
-    
-    def test_agent_metrics(self):
-        agent = IntersectionAgent(agent_id="ix_0")
-        metrics = agent.get_metrics()
-        
-        assert "agent/episode_count" in metrics
-        assert "agent/avg_reward" in metrics
-    
-    def test_epsilon_decay(self):
-        config = AgentConfig(epsilon_start=1.0, epsilon_decay=0.9)
-        agent = IntersectionAgent(agent_id="ix_0", config=config)
-        
-        initial_epsilon = agent.epsilon
-        agent.reset()
-        
-        assert agent.epsilon < initial_epsilon
-    
-    def test_save_and_load(self, tmp_path):
-        agent = IntersectionAgent(agent_id="ix_0", num_approaches=4)
-        
-        save_path = tmp_path / "agent.json"
-        agent.save(str(save_path))
-        
-        agent2 = IntersectionAgent(agent_id="ix_0", num_approaches=4)
-        agent2.load(str(save_path))
-        
-        assert agent2.epsilon == agent.epsilon
-
-
-class TestCoordination:
-    """Test multi-agent coordination."""
-    
-    def test_message_queue(self):
-        mq = MessageQueue()
-        
-        msg = AgentMessage(
-            sender_id="agent_a",
-            receiver_id="agent_b",
-            msg_type=MessageType.STATE_UPDATE,
-            payload={"queue": [5, 3, 2, 4]},
-            timestamp=100.0,
-        )
-        mq.send(msg)
-        
-        messages = mq.receive("agent_b", current_time=101.0)
-        assert len(messages) == 1
-        assert messages[0].sender_id == "agent_a"
-    
-    def test_broadcast(self):
-        mq = MessageQueue()
-        
-        msg = AgentMessage(
-            sender_id="agent_a",
-            receiver_id="*",
-            msg_type=MessageType.EMERGENCY_BROADCAST,
-            payload={"approach": 2},
-            timestamp=100.0,
-        )
-        mq.send(msg)
-        
-        for agent_id in ["agent_b", "agent_c", "agent_d"]:
-            messages = mq.receive(agent_id, current_time=101.0)
-            assert len(messages) == 1
-    
-    def test_message_expiry(self):
-        mq = MessageQueue()
-        
-        msg = AgentMessage(
-            sender_id="agent_a",
-            receiver_id="agent_b",
-            msg_type=MessageType.STATE_UPDATE,
-            payload={},
-            timestamp=100.0,
-            ttl=5.0,
-        )
-        mq.send(msg)
-        
-        # Within TTL
-        messages = mq.receive("agent_b", current_time=103.0)
-        assert len(messages) == 1
-        
-        # After TTL
-        messages = mq.receive("agent_b", current_time=110.0)
-        assert len(messages) == 0
-    
-    def test_consensus_reach(self):
-        consensus = ConsensusProtocol()
-        
-        # All neighbors agree on 0.8
-        result = consensus.reach_consensus(
-            agent_id="a",
-            own_value=0.8,
-            neighbor_values={"b": 0.8, "c": 0.8},
+        state = IntersectionState(
+            intersection_id="test", timestamp=0,
+            queue_north=10, queue_south=5,
+            queue_east=8, queue_west=3,
         )
         
-        assert abs(result - 0.8) < 0.01
-    
-    def test_consensus_with_disagreement(self):
-        consensus = ConsensusProtocol()
-        
-        result = consensus.reach_consensus(
-            agent_id="a",
-            own_value=0.5,
-            neighbor_values={"b": 0.9, "c": 0.9},
+        decision = TrafficDecision(
+            action="extend_green", phase="NS_GREEN",
+            duration=20, reasoning="test", confidence=0.8,
         )
         
-        # Should be between 0.5 and 0.9
-        assert 0.5 < result < 0.9
+        cache.set(state, decision)
+        cached = cache.get(state)
+        
+        assert cached is not None
+        assert cached.action == "extend_green"
     
-    def test_coordination_layer(self):
-        graph = {
-            "ix_0": ["ix_1"],
-            "ix_1": ["ix_0", "ix_2"],
-            "ix_2": ["ix_1"],
-        }
+    def test_cache_miss(self):
+        cache = DecisionCache()
         
-        coordinator = CoordinationLayer(graph)
+        state1 = IntersectionState(
+            intersection_id="test", timestamp=0,
+            queue_north=10, queue_south=5,
+            queue_east=8, queue_west=3,
+        )
         
-        # Update states
-        for ix_id in ["ix_0", "ix_1", "ix_2"]:
-            state = AgentState(
-                intersection_id=ix_id,
-                queue_lengths=np.array([5, 3, 2, 4]),
-                current_phase=0,
-                phase_duration=10.0,
-            )
-            coordinator.update_state(state)
+        state2 = IntersectionState(
+            intersection_id="test", timestamp=0,
+            queue_north=30, queue_south=25,
+            queue_east=28, queue_west=23,
+        )
         
-        # Get coordinated observation
-        obs = coordinator.get_coordinated_observation("ix_0")
+        decision = TrafficDecision(
+            action="extend_green", phase="NS_GREEN",
+            duration=20, reasoning="test", confidence=0.8,
+        )
         
-        assert "embedding" in obs
-        assert "consensus_value" in obs
-        assert "neighbor_queue_lengths" in obs
-
-
-class TestEdgeCases:
-    """Test edge cases and error handling."""
+        cache.set(state1, decision)
+        cached = cache.get(state2)
+        
+        assert cached is None  # Different queue ranges
     
-    def test_empty_simulation(self):
-        engine = SimulationEngine(SimulationConfig(seed=42))
-        metrics = engine.run(num_steps=10)
+    def test_cache_clear(self):
+        cache = DecisionCache()
         
-        assert metrics["throughput"] == 0
-    
-    def test_single_step(self):
-        engine = SimulationEngine(SimulationConfig(seed=42))
-        ix = Intersection(id="ix_0", approaches=4)
-        engine.add_intersection(ix)
+        state = IntersectionState(
+            intersection_id="test", timestamp=0,
+            queue_north=10, queue_south=5,
+            queue_east=8, queue_west=3,
+        )
         
-        obs = engine.step()
-        assert "ix_0" in obs
-    
-    def test_agent_without_observation(self):
-        agent = IntersectionAgent(agent_id="ix_0")
-        action = agent.act()
+        decision = TrafficDecision(
+            action="extend_green", phase="NS_GREEN",
+            duration=20, reasoning="test", confidence=0.8,
+        )
         
-        # Should return safe default
-        assert action.phase == 0
+        cache.set(state, decision)
+        cache.clear()
+        
+        assert cache.get(state) is None
