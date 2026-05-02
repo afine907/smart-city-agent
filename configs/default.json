@@ -1,0 +1,36 @@
+{
+  "scenario": "grid_3x3",
+  "simulation": {
+    "dt": 0.1,
+    "max_steps": 10000,
+    "arrival_rate": 0.5,
+    "speed_limit": 13.89,
+    "seed": 42
+  },
+  "agent": {
+    "hidden_dims": [128, 64],
+    "learning_rate": 3e-4,
+    "gamma": 0.99,
+    "epsilon_start": 1.0,
+    "epsilon_end": 0.05,
+    "epsilon_decay": 0.995,
+    "batch_size": 64,
+    "buffer_size": 100000,
+    "min_green": 10.0,
+    "max_green": 60.0,
+    "yellow_duration": 3.0
+  },
+  "reward": {
+    "wait_time_weight": 1.0,
+    "queue_weight": 0.5,
+    "throughput_weight": 0.3,
+    "phase_change_penalty": 0.1,
+    "balance_weight": 0.2
+  },
+  "coordination": {
+    "enabled": true,
+    "message_interval": 5.0,
+    "gnn_hidden_dim": 64,
+    "consensus_rounds": 5
+  }
+}
