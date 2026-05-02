@@ -152,13 +152,11 @@ class LLMClient:
             )
     
     def _calculate_cost(self, tokens_in: int, tokens_out: int, model: str) -> float:
-        """Calculate API call cost."""
-        if "gpt-4o-mini" in model:
-            return (tokens_in * 0.00015 + tokens_out * 0.0006) / 1000
-        elif "gpt-4o" in model:
-            return (tokens_in * 0.0025 + tokens_out * 0.01) / 1000
-        else:
-            return (tokens_in * 0.0001 + tokens_out * 0.0002) / 1000
+        """Calculate API call cost using CostTracker pricing."""
+        from traffic_agent.optimization.cost_tracker import MODEL_COSTS
+
+        costs = MODEL_COSTS.get(model, {"input": 0.0001, "output": 0.0002})
+        return (tokens_in * costs["input"] + tokens_out * costs["output"]) / 1000
     
     def get_stats(self) -> Dict[str, Any]:
         """Return usage statistics."""
