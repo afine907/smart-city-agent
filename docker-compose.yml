@@ -1,0 +1,12 @@
+version: "3.8"
+
+services:
+  traffic-agent:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - LONGCAT_API_KEY=${LONGCAT_API_KEY}
+      - LONGCAT_API_BASE=https://api.longcat.chat/openai
+    restart: unless-stopped
+    command: ["python", "-m", "traffic_agent.cli", "simulate", "--steps", "0", "--port", "8080"]
