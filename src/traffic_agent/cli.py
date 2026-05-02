@@ -260,6 +260,71 @@ def compare_timing(args) -> None:
         print(f"{key:<25} {fixed_val:>10.1f} {llm_val:>10.1f} {improvement:>9.1f}%")
 
 
+def run_scenario(args) -> None:
+    """Run traffic scenario with LLM or fixed timing."""
+    from traffic_agent.scenarios.presets import ALL_SCENARIOS, create_scenario
+    from traffic_agent.scenarios.runner import ScenarioRunner
+    from traffic_agent.comparison.benchmark import ComparisonReport
+
+    scenario = create_scenario(args.scenario, seed=args.seed)
+    runner = ScenarioRunner(scenario)
+
+    print(f"🚦 Scenario: {scenario.name}")
+    print(f"   {scenario.description}")
+    print(f"   Steps: {scenario.total_steps}")
+    print(f"   Phases: {len(scenario.phases)}")
+    print()
+
+    if args.mode == "compare":
+        # Run both and compare
+        print("🔴 Running fixed timing...")
+        fixed_result = runner.run_with_fixed()
+
+        print("🧠 Running LLM agents...")
+        llm_result = runner.run_with_llm()
+
+        # Calculate improvements
+        improvements = {}
+        for key in ["avg_wait_time", "max_wait_time", "total_queue"]:
+            f_val = fixed_result.metrics.get(key, 0)
+            l_val = llm_result.metrics.get(key, 0)
+            if f_val > 0:
+                improvements[key] = (f_val - l_val) / f_val * 100
+
+        for key in ["throughput", "vehicles_completed"]:
+            f_val = fixed_result.metrics.get(key, 0)
+            l_val = llm_result.metrics.get(key, 0)
+            if f_val > 0:
+                improvements[key] = (l_val - f_val) / f_val * 100
+
+        report = ComparisonReport(
+            llm_result=llm_result,
+            fixed_result=fixed_result,
+            improvements=improvements,
+        )
+        print(report.format_table())
+
+    elif args.mode == "llm":
+        result = runner.run_with_llm()
+        _print_scenario_result(result)
+
+    elif args.mode == "fixed":
+        result = runner.run_with_fixed()
+        _print_scenario_result(result)
+
+
+def _print_scenario_result(result) -> None:
+    """Print scenario result metrics."""
+    print(f"\n📊 Results: {result.name}")
+    print(f"   Steps: {result.steps}")
+    print(f"   Duration: {result.duration_seconds:.1f}s")
+    for key, value in result.metrics.items():
+        if isinstance(value, float):
+            print(f"   {key}: {value:.2f}")
+        else:
+            print(f"   {key}: {value}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="LLM Traffic Controller — AI-Powered Traffic Signal Control"
@@ -298,7 +363,16 @@ def main():
     sim_parser.add_argument("--speed", type=float, default=1.0, help="Simulation speed multiplier")
     sim_parser.add_argument("--port", type=int, default=8080, help="Dashboard server port")
     sim_parser.set_defaults(func=run_simulate)
-    
+
+    # Scenario command
+    scenario_parser = subparsers.add_parser("scenario", help="Run traffic scenario")
+    scenario_parser.add_argument("scenario", choices=["morning_peak", "normal", "accident", "evening_peak"],
+                                 help="Scenario to run")
+    scenario_parser.add_argument("--mode", choices=["compare", "llm", "fixed"], default="compare",
+                                 help="Run mode: compare (both), llm only, fixed only")
+    scenario_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    scenario_parser.set_defaults(func=run_scenario)
+
     args = parser.parse_args()
     
     if args.command is None:

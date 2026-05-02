@@ -8,6 +8,7 @@ import pytest
 
 from traffic_agent.optimization.cache import DecisionCache
 from traffic_agent.optimization.cost_tracker import CostTracker
+from traffic_agent.optimization.layered import LayeredDecisionMaker
 from traffic_agent.optimization.rule_engine import RuleEngine
 from traffic_agent.llm.parser import TrafficDecision
 from traffic_agent.tools.traffic_tools import IntersectionState
@@ -322,3 +323,47 @@ class TestCostTracker:
         
         summary = tracker.get_summary()
         assert summary["total_calls"] == 0
+
+
+# ─── Layered Decision Maker Tests ───────────────────────────
+
+class TestLayeredDecisionMaker:
+    """Test LayeredDecisionMaker three-layer pipeline."""
+
+    def test_low_traffic_uses_rules(self):
+        """Low traffic should be handled by rule engine (Layer 1)."""
+        maker = LayeredDecisionMaker()
+        state = _make_state(queue_north=1, queue_south=0, queue_east=0, queue_west=0)
+
+        decision = maker.decide(state)
+
+        assert decision is not None
+        stats = maker.get_stats()
+        assert stats["layer1_rules"] == 1
+        assert stats["layer3_llm"] == 0
+
+    def test_stats_tracking(self):
+        maker = LayeredDecisionMaker()
+        state = _make_state(queue_north=1, queue_south=0, queue_east=0, queue_west=0)
+        maker.decide(state)
+
+        stats = maker.get_stats()
+        assert stats["total_decisions"] == 1
+        assert "rule_rate" in stats
+        assert "free_rate" in stats
+
+    def test_complexity_simple(self):
+        maker = LayeredDecisionMaker()
+        state = _make_state(queue_north=2, queue_south=1, queue_east=1, queue_west=0)
+        assert maker._assess_complexity(state) == "simple"
+
+    def test_complexity_moderate(self):
+        maker = LayeredDecisionMaker()
+        state = _make_state(queue_north=5, queue_south=3, queue_east=10, queue_west=8)
+        assert maker._assess_complexity(state) in ["moderate", "complex"]
+
+    def test_complexity_emergency(self):
+        maker = LayeredDecisionMaker()
+        state = _make_state(queue_north=1, queue_south=0, queue_east=0, queue_west=0)
+        state.emergency = True
+        assert maker._assess_complexity(state) == "complex"
