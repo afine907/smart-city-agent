@@ -1,24 +1,37 @@
 """
 LLM Client — Unified interface for LLM API calls.
 
-Supports OpenAI, Qwen, and other OpenAI-compatible APIs.
+Supports OpenAI, Qwen, LongCat, and other OpenAI-compatible APIs.
 """
 
 import json
 import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
+
+
+def load_env():
+    """Load .env file if present."""
+    env_path = Path(__file__).parent.parent.parent.parent / ".env"
+    if env_path.exists():
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = line.split("=", 1)
+                    os.environ.setdefault(key.strip(), value.strip())
 
 
 @dataclass
 class LLMConfig:
     """LLM configuration."""
     # Model selection
-    fast_model: str = "gpt-4o-mini"      # Routine decisions
-    smart_model: str = "gpt-4o"          # Complex coordination
+    fast_model: str = "LongCat-Flash-Chat"        # Routine decisions
+    smart_model: str = "LongCat-Flash-Thinking-2601"  # Complex coordination
     
     # API settings
     api_key: Optional[str] = None
@@ -27,14 +40,15 @@ class LLMConfig:
     max_retries: int = 3
     
     # Cost tracking
-    cost_per_1k_input: float = 0.00015   # GPT-4o-mini
+    cost_per_1k_input: float = 0.00015
     cost_per_1k_output: float = 0.0006
     
     def __post_init__(self):
+        load_env()  # Load .env first
         if self.api_key is None:
             self.api_key = os.getenv("OPENAI_API_KEY", "")
         if self.api_base is None:
-            self.api_base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1")
+            self.api_base = os.getenv("OPENAI_API_BASE", "https://api.longcat.chat/openai")
 
 
 @dataclass

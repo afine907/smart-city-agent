@@ -235,7 +235,7 @@ def main():
     run_parser.add_argument("--scenario", choices=["single", "grid_3x3"],
                            default="single", help="Simulation scenario")
     run_parser.add_argument("--steps", type=int, default=500, help="Steps")
-    run_parser.add_argument("--model", default="gpt-4o-mini", help="LLM model")
+    run_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model")
     run_parser.add_argument("--api-key", default=None, help="API key")
     run_parser.add_argument("--interval", type=float, default=5.0,
                            help="Decision interval (seconds)")
