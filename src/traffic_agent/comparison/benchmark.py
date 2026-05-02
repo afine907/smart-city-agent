@@ -6,6 +6,7 @@ then produces quantitative comparison reports.
 """
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -121,8 +122,8 @@ class ComparisonBenchmark:
         self.seed = seed
         self.llm_config = llm_config or LLMConfig(
             fast_model="LongCat-Flash-Chat",
-            api_key="ak_2Cn4wg4B92dL4kz8Vu95T6Tw2S36T",
-            api_base="https://api.longcat.chat/openai",
+            api_key=os.getenv("LONGCAT_API_KEY", ""),
+            api_base=os.getenv("LONGCAT_API_BASE", "https://api.longcat.chat/openai"),
         )
     
     def run(self) -> ComparisonReport:

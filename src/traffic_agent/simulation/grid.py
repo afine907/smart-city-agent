@@ -117,19 +117,42 @@ class GridSimulation:
     def get_state(self, ix_id: str) -> IntersectionState:
         """Get current state for an intersection."""
         ix = self.intersections[ix_id]
-        
+
         # Count vehicles approaching from each direction
         queue_north = self._count_approaching(ix_id, 0)  # from north
         queue_south = self._count_approaching(ix_id, 2)  # from south
         queue_east = self._count_approaching(ix_id, 1)   # from east
         queue_west = self._count_approaching(ix_id, 3)   # from west
-        
+
         # Count waiting vehicles (at intersection, red light)
         wait_north = self._count_waiting(ix_id, 0)
         wait_south = self._count_waiting(ix_id, 2)
         wait_east = self._count_waiting(ix_id, 1)
         wait_west = self._count_waiting(ix_id, 3)
-        
+
+        # Check for emergency vehicles
+        emergency = False
+        emergency_approach = None
+        for seg_key, seg in self.segments.items():
+            if seg.to_id == ix_id:
+                for v in seg.vehicles:
+                    if v.is_emergency:
+                        emergency = True
+                        emergency_approach = v.approach
+                        break
+                if emergency:
+                    break
+
+        # Emergency triggers immediate phase change
+        if emergency and emergency_approach is not None:
+            if emergency_approach in [0, 2]:
+                target_phase = "NS_GREEN"
+            else:
+                target_phase = "EW_GREEN"
+            if ix.current_phase != target_phase:
+                ix.current_phase = target_phase
+                ix.phase_timer = 0.0
+
         return IntersectionState(
             intersection_id=ix_id,
             timestamp=self.time,
@@ -143,6 +166,8 @@ class GridSimulation:
             wait_west=wait_west * 2.0,
             current_phase=ix.current_phase,
             phase_duration=ix.phase_timer,
+            emergency=emergency,
+            emergency_approach=emergency_approach,
         )
     
     def apply_decision(self, ix_id: str, decision: Dict) -> None:
@@ -323,33 +348,49 @@ class GridSimulation:
     def _route_vehicle(self, from_id: str, vehicle: Vehicle) -> Optional[str]:
         """Route vehicle to next segment. Returns segment key or None if completed."""
         from_row, from_col = self._parse_id(from_id)
-        
-        # Determine direction based on approach
-        # approach 0=N, 1=E, 2=S, 3=W
+
+        # Vehicle continues in its current direction (physical logic)
+        # approach 0=N(→up), 1=E(→right), 2=S(→down), 3=W(→left)
         directions = [
             (-1, 0),  # N -> go up
             (0, 1),   # E -> go right
             (1, 0),   # S -> go down
             (0, -1),  # W -> go left
         ]
-        
+
         dr, dc = directions[vehicle.approach]
         to_row, to_col = from_row + dr, from_col + dc
-        
+
         # Check if out of bounds
         if to_row < 0 or to_row >= self.rows or to_col < 0 or to_col >= self.cols:
             return None
-        
+
         to_id = f"ix_{to_row}_{to_col}"
         seg_key = f"{from_id}->{to_id}"
-        
+
         if seg_key in self.segments:
-            # Move vehicle to next segment
+            # Move vehicle to next segment, keeping original approach
             vehicle.position = self.config.road_length
-            vehicle.approach = np.random.randint(0, 4)  # Random new direction
             self.segments[seg_key].vehicles.append(vehicle)
             return seg_key
-        
+
+        # No direct road — try turning (pick a valid adjacent road)
+        turn_candidates = []
+        for new_approach, (ndr, ndc) in enumerate(directions):
+            nr, nc = from_row + ndr, from_col + ndc
+            if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                new_to = f"ix_{nr}_{nc}"
+                new_key = f"{from_id}->{new_to}"
+                if new_key in self.segments:
+                    turn_candidates.append((new_approach, new_key))
+
+        if turn_candidates:
+            new_approach, new_key = turn_candidates[np.random.randint(len(turn_candidates))]
+            vehicle.position = self.config.road_length
+            vehicle.approach = new_approach
+            self.segments[new_key].vehicles.append(vehicle)
+            return new_key
+
         return None
     
     def _has_green(self, ix: Intersection, approach: int) -> bool:

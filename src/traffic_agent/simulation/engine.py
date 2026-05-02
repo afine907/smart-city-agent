@@ -24,6 +24,7 @@ class SimulationConfig:
     speed_limit: float = 13.89   # m/s (50 km/h)
     road_length: float = 200.0   # meters
     seed: Optional[int] = None
+    emergency_rate: float = 0.005  # Probability of emergency vehicle per step
 
 
 @dataclass
@@ -34,6 +35,7 @@ class Vehicle:
     position: float
     speed: float
     waiting: bool = False
+    is_emergency: bool = False
 
 
 @dataclass
@@ -106,7 +108,19 @@ class SimulationEngine:
         ix = self.network.intersections.get(intersection_id)
         if ix is None:
             return IntersectionState(intersection_id=intersection_id, timestamp=self.time)
-        
+
+        # Check for emergency vehicles
+        emergency = False
+        emergency_approach = None
+        for approach in range(ix.approaches):
+            for v in ix.vehicles[approach]:
+                if v.is_emergency:
+                    emergency = True
+                    emergency_approach = approach
+                    break
+            if emergency:
+                break
+
         return IntersectionState(
             intersection_id=intersection_id,
             timestamp=self.time,
@@ -120,6 +134,8 @@ class SimulationEngine:
             wait_west=ix.get_wait_time(3),
             current_phase=ix.current_phase,
             phase_duration=ix.phase_timer,
+            emergency=emergency,
+            emergency_approach=emergency_approach,
         )
     
     def apply_decision(self, intersection_id: str, decision: Dict) -> None:
@@ -176,13 +192,19 @@ class SimulationEngine:
         for approach in range(ix.approaches):
             if np.random.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
+                is_emergency = np.random.random() < self.config.emergency_rate
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=approach,
                     position=self.config.road_length,
-                    speed=self.config.speed_limit,
+                    speed=self.config.speed_limit * (1.5 if is_emergency else 1.0),
+                    is_emergency=is_emergency,
                 )
                 ix.vehicles[approach].append(v)
+
+                # Emergency vehicles trigger immediate green for their approach
+                if is_emergency:
+                    self._handle_emergency(ix, approach)
     
     def _update_vehicles(self, ix: Intersection, dt: float) -> None:
         for approach in range(ix.approaches):
@@ -215,6 +237,20 @@ class SimulationEngine:
         elif ix.current_phase == "EW_GREEN":
             return approach in [1, 3]  # E, W
         return False  # Yellow
+
+    def _handle_emergency(self, ix: Intersection, approach: int) -> None:
+        """Handle emergency vehicle — force green for its approach."""
+        # approaches: 0=N, 1=E, 2=S, 3=W
+        # NS approaches: 0, 2 → NS_GREEN
+        # EW approaches: 1, 3 → EW_GREEN
+        if approach in [0, 2]:
+            target_phase = "NS_GREEN"
+        else:
+            target_phase = "EW_GREEN"
+
+        if ix.current_phase != target_phase:
+            ix.current_phase = target_phase
+            ix.phase_timer = 0.0
     
     def _get_metrics(self) -> Dict[str, Any]:
         metrics = {

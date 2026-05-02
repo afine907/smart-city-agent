@@ -177,9 +177,7 @@ async def _run_simulation(steps: int, speed: float):
                     thought=f"Step {step}: Analyzing traffic at {ix_id}",
                     context={
                         "step": step,
-                        "queue": len(sim.intersections[ix_id].queue)
-                        if hasattr(sim.intersections[ix_id], "queue")
-                        else 0,
+                        "queue": sim.intersections[ix_id].get_total_queue(),
                     },
                 )
 

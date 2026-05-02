@@ -12,7 +12,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from traffic_agent.llm.client import LLMClient, LLMConfig
 from traffic_agent.llm.parser import ResponseParser, TrafficDecision
-from traffic_agent.simulation.grid import GridSimulation
 from traffic_agent.tools.traffic_tools import IntersectionState
 
 
@@ -50,11 +49,19 @@ class MessageBus:
         msgs = self.messages.pop(agent_id, [])
         return msgs
     
-    def broadcast(self, sender: str, msg_type: str, content: str, 
+    def broadcast(self, sender: str, msg_type: str, content: str,
                   data: Optional[Dict] = None) -> None:
         """Broadcast message to all agents (except sender)."""
-        # This is handled at a higher level
-        pass
+        for agent_id in self.messages:
+            if agent_id != sender:
+                self.send(AgentMessage(
+                    sender=sender,
+                    receiver=agent_id,
+                    msg_type=msg_type,
+                    content=content,
+                    timestamp=time.time(),
+                    data=data,
+                ))
     
     def clear(self):
         self.messages.clear()
@@ -110,7 +117,7 @@ class CoordinationCrew:
     
     def __init__(
         self,
-        simulation: GridSimulation,
+        simulation,
         config: Optional[LLMConfig] = None,
     ):
         self.sim = simulation
