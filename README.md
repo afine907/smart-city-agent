@@ -1,10 +1,10 @@
 # 🚦 LLM Traffic Controller
 
-> **用大语言模型驱动的多Agent城市交通信号控制系统**
+> **用大语言模型驱动的多Agent城市交通信号控制系统 — 支持真实 OpenStreetMap 路网**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-119%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-164%20passed-brightgreen.svg)](tests/)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](Dockerfile)
 
 ```
@@ -40,6 +40,7 @@
 | 异常处理 | 需重新训练 | **推理能力直接处理** |
 | Agent协调 | 复杂奖励函数 | **自然语言对话** |
 | 维护成本 | 高 | **更新 Prompt 即可** |
+| 路网支持 | 固定网格 | **真实 OpenStreetMap 路网** |
 
 ## 🚀 Quick Start
 
@@ -67,6 +68,40 @@ python -m traffic_agent.cli compare --steps 100
 # 运行多场景测试
 python -m traffic_agent.cli scenario morning_peak --mode compare
 python -m traffic_agent.cli scenario accident --mode compare
+```
+
+### 🗺️ OpenStreetMap 路网仿真
+
+```bash
+# 运行曼哈顿时代广场路网
+python -m traffic_agent.cli osm manhattan --steps 200
+
+# 运行武汉光谷路网
+python -m traffic_agent.cli osm wuhan --steps 200
+
+# 带 Dashboard 的 OSM 仿真
+python -m traffic_agent.cli simulate --preset manhattan --steps 200
+```
+
+内置两个预设路网：
+
+| 预设 | 路口数 | 路段数 | 说明 |
+|------|--------|--------|------|
+| `manhattan` | 9 | 12 | 纽约时代广场 3×3 区域 |
+| `wuhan` | 6 | 7 | 武汉光谷广场周边 |
+
+```python
+# Python API
+from traffic_agent.simulation.osm_sim import OSMSimulation
+
+sim = OSMSimulation.from_preset("manhattan")
+sim = OSMSimulation.from_preset("wuhan")
+
+# 从字典加载
+sim = OSMSimulation.from_dict(data)
+
+# 从 OSM API 加载（需安装 osmnx）
+# sim = OSMSimulation.from_place("Wuhan, China")
 ```
 
 ### Docker 一键运行
@@ -97,6 +132,16 @@ docker run -p 8080:8080 -e LONGCAT_API_KEY="your-key" traffic-agent
 │  │  Layer 1: 规则引擎 (FREE) → 常规状态                    │ │
 │  │  Layer 2: 决策缓存 (FREE) → 相似路况                    │ │
 │  │  Layer 3: LLM 推理 (PAID) → 复杂决策                    │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│                    仿真引擎                                   │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │  GridSimulation    │  OSMSimulation                     │ │
+│  │  • 3×3 固定网格    │  • 真实 OpenStreetMap 路网          │ │
+│  │  • 等长道路        │  • Dijkstra 最短路径路由            │ │
+│  │                    │  • 可变车道/限速                    │ │
 │  └─────────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -141,13 +186,17 @@ python -m traffic_agent.cli scenario morning_peak --mode llm
 实时展示每个 Agent 的推理过程：
 
 ```bash
-# 启动 Dashboard
+# 启动 Dashboard（3×3 网格）
 python -m traffic_agent.cli simulate --port 8080
+
+# 启动 Dashboard（OSM 路网）
+python -m traffic_agent.cli simulate --preset manhattan --port 8080
+
 # 浏览器打开 http://localhost:8080
 ```
 
 Dashboard 提供：
-- 实时路况地图（3×3 网格）
+- 实时路况地图（支持 3×3 网格和 OSM 路网）
 - Agent 推理过程流式展示
 - 决策时间线
 - 性能指标（等待时间、排队长度、吞吐量）
@@ -159,7 +208,12 @@ smart-city-agent/
 ├── src/traffic_agent/
 │   ├── agents/              # Agent 基类 + 接口
 │   ├── crew/                # CrewAI 编排 + 协调
-│   ├── simulation/          # 仿真引擎（网格 + 路口 + 车辆）
+│   ├── simulation/          # 仿真引擎
+│   │   ├── engine.py        #   核心仿真数据结构
+│   │   ├── grid.py          #   3×3 网格仿真
+│   │   ├── osm.py           #   OpenStreetMap 路网加载
+│   │   ├── osm_sim.py       #   OSM 路网仿真
+│   │   └── router.py        #   Dijkstra 最短路径路由
 │   ├── llm/                 # LLM 客户端 + 解析器
 │   ├── optimization/        # 成本优化（缓存 + 规则 + 分层）
 │   ├── comparison/          # 对比实验框架
@@ -167,7 +221,7 @@ smart-city-agent/
 │   ├── visualization/       # SSE 事件 + Dashboard
 │   ├── tools/               # Agent 工具（观察、通信、紧急）
 │   └── cli.py               # CLI 入口
-├── tests/                   # 119 个测试
+├── tests/                   # 164 个测试
 ├── docs/                    # 设计文档
 ├── examples/                # 示例脚本
 ├── Dockerfile               # 容器化
@@ -181,9 +235,10 @@ smart-city-agent/
 python -m pytest tests/ -v
 
 # 运行特定模块
-python -m pytest tests/test_grid.py -v
-python -m pytest tests/test_scenarios.py -v
-python -m pytest tests/test_optimization.py -v
+python -m pytest tests/test_osm.py -v       # OSM 集成
+python -m pytest tests/test_router.py -v    # 路由器
+python -m pytest tests/test_grid.py -v      # 网格仿真
+python -m pytest tests/test_scenarios.py -v # 场景测试
 ```
 
 ## 📝 License

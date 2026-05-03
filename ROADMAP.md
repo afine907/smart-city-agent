@@ -80,11 +80,14 @@
 
 **目标**: 真实路网 + 部署 + 开源推广
 
-### 3.1 OpenStreetMap 集成 ⏳
-- [ ] 导入真实路网数据
-- [ ] 交叉口自动识别
-- [ ] 车道建模
-- [ ] 信号灯映射
+### 3.1 OpenStreetMap 集成 ✅
+- [x] 导入真实路网数据（dict/GeoJSON/osmnx）
+- [x] 交叉口自动识别
+- [x] 车道建模（可变车道数）
+- [x] 信号灯映射
+- [x] Dijkstra 最短路径路由
+- [x] 两个预设路网（Manhattan + Wuhan 光谷）
+- [x] CLI + Dashboard 支持 OSM 仿真
 
 ### 3.2 部署方案 ⏳
 - [x] Docker 容器化
