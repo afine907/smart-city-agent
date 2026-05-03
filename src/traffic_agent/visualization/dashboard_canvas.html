@@ -173,6 +173,14 @@ function resize() {
   canvas.style.width = W + 'px';
   canvas.style.height = H + 'px';
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+  // Queue chart HiDPI
+  const dpr = devicePixelRatio;
+  qcCanvas.width = 200 * dpr;
+  qcCanvas.height = 150 * dpr;
+  qcCanvas.style.width = '200px';
+  qcCanvas.style.height = '150px';
+  qcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 // ============================================================
@@ -315,6 +323,9 @@ function connect() {
   es.onerror = () => {
     document.getElementById('sd').className = 'dot off';
     document.getElementById('st').textContent = 'OFFLINE';
+    // Auto-reconnect after 3s
+    es.close();
+    setTimeout(connect, 3000);
   };
 
   ['thinking','decision','conflict','coordination','metrics','simulation_start','simulation_step','simulation_end']
@@ -324,14 +335,15 @@ function connect() {
 
 function handleEvent(ev) {
   const aid = ev.agent_id || '';
+  const data = ev.data || {};
 
   // Update intersection state
   if (intersections[aid]) {
-    if (ev.event_type === 'decision' && ev.data.decision) {
-      intersections[aid].phase = ev.data.decision.phase;
+    if (ev.event_type === 'decision' && data.decision) {
+      intersections[aid].phase = data.decision.phase;
     }
-    if (ev.data.queue !== undefined) {
-      intersections[aid].queue = ev.data.queue;
+    if (data.queue !== undefined) {
+      intersections[aid].queue = data.queue;
     }
     // Flash thinking glow
     if (ev.event_type === 'thinking') {
@@ -341,7 +353,7 @@ function handleEvent(ev) {
 
   // Update step counter
   if (ev.event_type === 'simulation_step') {
-    simStep = ev.data.step || simStep + 1;
+    simStep = data.step || simStep + 1;
     document.getElementById('s5').textContent = simStep;
     // Spawn vehicles on step
     spawnVehicles();
@@ -701,12 +713,13 @@ function addFeedItem(ev) {
   const el = document.createElement('div');
   el.className = `fi ${ev.event_type}`;
   const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
+  const data = ev.data || {};
   let detail = '';
-  if (ev.data.thought) detail = ev.data.thought.substring(0, 60);
-  else if (ev.data.decision) detail = `phase=${ev.data.decision.phase}`;
-  else if (ev.data.conflict_type) detail = ev.data.conflict_type;
-  else if (ev.data.message) detail = ev.data.message.substring(0, 50);
-  else detail = JSON.stringify(ev.data).substring(0, 50);
+  if (data.thought) detail = data.thought.substring(0, 60);
+  else if (data.decision) detail = `phase=${data.decision.phase}`;
+  else if (data.conflict_type) detail = data.conflict_type;
+  else if (data.message) detail = data.message.substring(0, 50);
+  else detail = JSON.stringify(data).substring(0, 50);
 
   el.innerHTML = `<span class="ts">${time}</span><span class="ag">${ev.agent_id||'sys'}</span> ${detail}`;
   list.prepend(el);

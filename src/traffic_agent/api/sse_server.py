@@ -40,43 +40,38 @@ def get_collector() -> EventCollector:
     return _collector
 
 
-@app.get("/", response_class=HTMLResponse)
-async def serve_dashboard():
-    """Serve the Canvas 2D dashboard HTML page."""
+def _get_vis_dir() -> Path:
+    """Resolve the visualization directory."""
     vis_dir = Path(__file__).parent.parent / "visualization"
     if not vis_dir.exists():
         vis_dir = Path(__file__).parent.parent.parent / "visualization"
-    dashboard_path = vis_dir / "dashboard_canvas.html"
-    if dashboard_path.exists():
-        return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
+    return vis_dir
+
+
+def _serve_html(filename: str, title: str = "Dashboard") -> HTMLResponse:
+    """Serve an HTML file from the visualization directory."""
+    path = _get_vis_dir() / filename
+    if path.exists():
+        return HTMLResponse(content=path.read_text(encoding="utf-8"))
+    return HTMLResponse(content=f"<h1>{title} not found</h1>", status_code=404)
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_dashboard():
+    """Serve the Canvas 2D dashboard HTML page."""
+    return _serve_html("dashboard_canvas.html", "Dashboard")
 
 
 @app.get("/dashboard/3d", response_class=HTMLResponse)
 async def serve_dashboard_3d():
     """Serve the legacy 3D dashboard."""
-    vis_dir = Path(__file__).parent.parent / "visualization"
-    if not vis_dir.exists():
-        vis_dir = Path(__file__).parent.parent.parent / "visualization"
-    dashboard_path = vis_dir / "dashboard_3d.html"
-    if dashboard_path.exists():
-        return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
-    return HTMLResponse(content="<h1>3D Dashboard not found</h1>", status_code=404)
+    return _serve_html("dashboard_3d.html", "3D Dashboard")
 
 
 @app.get("/dashboard/classic", response_class=HTMLResponse)
 async def serve_dashboard_classic():
     """Serve the classic SVG dashboard."""
-    vis_dir = Path(__file__).parent.parent / "visualization"
-    if not vis_dir.exists():
-        vis_dir = Path(__file__).parent.parent.parent / "visualization"
-    dashboard_path = vis_dir / "dashboard.html"
-    if dashboard_path.exists():
-        return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
-    return HTMLResponse(
-        content="<h1>Classic Dashboard not found</h1>",
-        status_code=404,
-    )
+    return _serve_html("dashboard.html", "Classic Dashboard")
 
 
 @app.get("/api/events/stream")
