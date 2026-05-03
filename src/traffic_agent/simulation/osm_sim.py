@@ -11,6 +11,7 @@ import numpy as np
 
 from traffic_agent.simulation.engine import Intersection, SimulationConfig, Vehicle
 from traffic_agent.simulation.osm import OSMNetwork
+from traffic_agent.simulation.router import RoutePlanner
 from traffic_agent.tools.traffic_tools import IntersectionState
 
 
@@ -68,6 +69,12 @@ class OSMSimulation:
 
         # Track which intersections are boundary (sources/sinks)
         self.boundary_intersections: set = set()
+
+        # Route planner for shortest-path routing
+        self.router = RoutePlanner()
+
+        # Vehicle destinations: vehicle_id -> destination intersection_id
+        self.vehicle_destinations: dict[str, str] = {}
 
         if self.config.seed is not None:
             np.random.seed(self.config.seed)
@@ -147,6 +154,9 @@ class OSMSimulation:
             # Boundary: fewer than 2 incoming (source) OR fewer than 2 outgoing (sink)
             if inc < 2 or out < 2:
                 self.boundary_intersections.add(ix_id)
+
+        # Build route planner graph
+        self.router.build_graph(self.segments)
 
     def get_neighbors(self, ix_id: str) -> list[str]:
         """Get neighbor intersection IDs."""
@@ -281,6 +291,8 @@ class OSMSimulation:
         self.total_vehicles_generated = 0
         self.total_vehicles_completed = 0
         self.total_wait_time = 0.0
+        self.vehicle_destinations.clear()
+        self.router.clear_cache()
 
         for ix in self.intersections.values():
             ix.current_phase = "NS_GREEN"
@@ -318,10 +330,20 @@ class OSMSimulation:
 
     def _generate_boundary_vehicles(self, dt: float) -> None:
         """Generate vehicles at boundary intersections."""
+        all_ids = list(self.intersections.keys())
+        if len(all_ids) < 2:
+            return
+
         for ix_id in self.boundary_intersections:
             if np.random.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
                 self.total_vehicles_generated += 1
+
+                # Assign random destination (different from source)
+                dest = ix_id
+                while dest == ix_id and len(all_ids) > 1:
+                    dest = all_ids[np.random.randint(len(all_ids))]
+                self.vehicle_destinations[f"v_{self._vehicle_counter}"] = dest
 
                 # Create vehicle approaching this intersection
                 approach = np.random.randint(0, 4)
@@ -407,25 +429,53 @@ class OSMSimulation:
 
     def _route_vehicle(self, from_id: str, vehicle: Vehicle) -> str | None:
         """
-        Route vehicle to next segment.
+        Route vehicle to next segment using shortest-path routing.
         Returns segment ID or None if completed.
         """
-        # Find outgoing segments from this intersection
-        outgoing = [seg for seg in self.segments.values() if seg.from_id == from_id]
+        dest = self.vehicle_destinations.get(vehicle.id)
 
-        if not outgoing:
+        # If no destination or already at destination, pick random exit
+        if dest is None or dest == from_id:
+            self.vehicle_destinations.pop(vehicle.id, None)
+            outgoing = [seg for seg in self.segments.values() if seg.from_id == from_id]
+            if not outgoing:
+                return None
+            next_seg = outgoing[np.random.randint(len(outgoing))]
+            vehicle.position = next_seg.length
+            vehicle.approach = self._road_to_approach(from_id, next_seg.to_id)
+            next_seg.vehicles.append(vehicle)
+            return next_seg.road_id
+
+        # Use router to find next hop
+        next_node = self.router.next_hop(from_id, dest)
+        if next_node is None:
+            # No path found — pick random exit
+            outgoing = [seg for seg in self.segments.values() if seg.from_id == from_id]
+            if not outgoing:
+                self.vehicle_destinations.pop(vehicle.id, None)
+                return None
+            next_seg = outgoing[np.random.randint(len(outgoing))]
+            vehicle.position = next_seg.length
+            vehicle.approach = self._road_to_approach(from_id, next_seg.to_id)
+            next_seg.vehicles.append(vehicle)
+            return next_seg.road_id
+
+        # Find the road segment to next hop
+        edge_id = self.router.get_edge_id(from_id, next_node)
+        if edge_id is None or edge_id not in self.segments:
+            self.vehicle_destinations.pop(vehicle.id, None)
             return None
 
-        # Simple routing: pick a random outgoing segment
-        # (In production, this would use OSM routing / shortest path)
-        next_seg = outgoing[np.random.randint(len(outgoing))]
-
-        # Update vehicle
+        next_seg = self.segments[edge_id]
         vehicle.position = next_seg.length
-        vehicle.approach = self._road_to_approach(from_id, next_seg.to_id)
+        vehicle.approach = self._road_to_approach(from_id, next_node)
         next_seg.vehicles.append(vehicle)
 
-        return next_seg.road_id
+        # Clean up destination if arrived
+        if next_node == dest:
+            self.vehicle_destinations.pop(vehicle.id, None)
+
+        return edge_id
 
     def _has_green(self, ix: Intersection, approach: int) -> bool:
         """Check if approach has green light."""

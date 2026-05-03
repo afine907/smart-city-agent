@@ -10,6 +10,7 @@ from traffic_agent.simulation.engine import (
 from traffic_agent.simulation.grid import GridSimulation, RoadSegment
 from traffic_agent.simulation.osm import OSMNetwork, OSMRoad, OSMIntersection
 from traffic_agent.simulation.osm_sim import OSMSimulation
+from traffic_agent.simulation.router import RoutePlanner
 
 __all__ = [
     "SimulationConfig",
@@ -23,4 +24,5 @@ __all__ = [
     "OSMRoad",
     "OSMIntersection",
     "OSMSimulation",
+    "RoutePlanner",
 ]
