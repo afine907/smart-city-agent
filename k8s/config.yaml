@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: traffic-agent-config
+  namespace: traffic-agent
+data:
+  LONGCAT_API_BASE: "https://api.longcat.chat/openai"
+  SIMULATION_STEPS: "0"
+  DEFAULT_PRESET: "manhattan"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: traffic-agent-secrets
+  namespace: traffic-agent
+type: Opaque
+stringData:
+  LONGCAT_API_KEY: "${LONGCAT_API_KEY}"

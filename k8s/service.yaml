@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: traffic-agent
+  namespace: traffic-agent
+  labels:
+    app: traffic-agent
+spec:
+  type: LoadBalancer
+  selector:
+    app: traffic-agent
+  ports:
+    - port: 80
+      targetPort: 8080
+      protocol: TCP
+      name: http
