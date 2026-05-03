@@ -79,6 +79,9 @@ python -m traffic_agent.cli osm manhattan --steps 200
 # 运行武汉光谷路网
 python -m traffic_agent.cli osm wuhan --steps 200
 
+# 运行深圳留仙洞路网
+python -m traffic_agent.cli osm shenzhen --steps 200
+
 # 带 Dashboard 的 OSM 仿真
 python -m traffic_agent.cli simulate --preset manhattan --steps 200
 ```
@@ -89,6 +92,7 @@ python -m traffic_agent.cli simulate --preset manhattan --steps 200
 |------|--------|--------|------|
 | `manhattan` | 9 | 12 | 纽约时代广场 3×3 区域 |
 | `wuhan` | 6 | 7 | 武汉光谷广场周边 |
+| `shenzhen` | 9 | 12 | 深圳西丽留仙洞科技园 |
 
 ```python
 # Python API
