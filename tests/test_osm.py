@@ -6,6 +6,7 @@ from traffic_agent.simulation.engine import SimulationConfig
 from traffic_agent.simulation.osm import (
     SMALL_MANHATTAN,
     WUHAN_OPTICS_VALLEY,
+    SHENZHEN_LIUXIANDONG,
     OSMNetwork,
 )
 from traffic_agent.simulation.osm_sim import OSMSimulation
@@ -235,6 +236,37 @@ class TestOSMSimulation:
         metrics = sim.get_metrics()
         assert metrics["num_intersections"] == 6
         assert metrics["vehicles_generated"] > 0
+
+    def test_shenzhen_preset(self):
+        """Shenzhen Liuxiandong preset loads correctly."""
+        net = OSMNetwork.from_dict(SHENZHEN_LIUXIANDONG)
+        assert len(net.intersections) == 9
+        assert len(net.roads) == 12
+
+        # Check specific roads
+        assert net.get_road_between("lxd_1", "lxd_2") is not None
+        assert net.get_road_between("lxd_2", "lxd_5") is not None
+
+    def test_shenzhen_simulation_runs(self):
+        """Shenzhen preset simulation runs correctly."""
+        sim = OSMSimulation.from_preset("shenzhen", SimulationConfig(seed=42))
+        for _ in range(100):
+            sim.step()
+        metrics = sim.get_metrics()
+        assert metrics["num_intersections"] == 9
+        assert metrics["vehicles_generated"] > 0
+
+    def test_shenzhen_road_names(self):
+        """Shenzhen preset has correct road names."""
+        sim = OSMSimulation.from_preset("shenzhen")
+        # Check that key roads exist
+        road_names = set()
+        for seg in sim.segments.values():
+            if seg.name:
+                road_names.add(seg.name)
+        assert "留仙大道" in road_names
+        assert "南光高速" in road_names
+        assert "西丽路" in road_names
 
 
 class TestOSMGeoJSON:

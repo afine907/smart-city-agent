@@ -97,11 +97,16 @@ class OSMSimulation:
     @classmethod
     def from_preset(cls, preset_name: str, config: SimulationConfig | None = None) -> "OSMSimulation":
         """Create simulation from a preset network."""
-        from traffic_agent.simulation.osm import SMALL_MANHATTAN, WUHAN_OPTICS_VALLEY
+        from traffic_agent.simulation.osm import (
+            SMALL_MANHATTAN,
+            WUHAN_OPTICS_VALLEY,
+            SHENZHEN_LIUXIANDONG,
+        )
 
         presets = {
             "manhattan": SMALL_MANHATTAN,
             "wuhan": WUHAN_OPTICS_VALLEY,
+            "shenzhen": SHENZHEN_LIUXIANDONG,
         }
 
         data = presets.get(preset_name)

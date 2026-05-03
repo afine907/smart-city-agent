@@ -437,3 +437,113 @@ WUHAN_OPTICS_VALLEY = {
         "g_7": {"from": "guanggu_5", "to": "guanggu_6", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "关山路", "oneway": True},
     },
 }
+
+# Shenzhen Xili Liuxiandong (深圳西丽留仙洞) — tech park + university town area
+SHENZHEN_LIUXIANDONG = {
+    "intersections": {
+        "lxd_1": {
+            "lat": 22.5768, "lon": 113.9520,
+            "neighbors": ["lxd_2", "lxd_4"],
+            "roads": ["留仙大道"],
+            "speed_limit": 60.0,
+        },
+        "lxd_2": {
+            "lat": 22.5768, "lon": 113.9560,
+            "neighbors": ["lxd_1", "lxd_3", "lxd_5"],
+            "roads": ["留仙大道", "南光高速"],
+            "speed_limit": 40.0,
+        },
+        "lxd_3": {
+            "lat": 22.5768, "lon": 113.9600,
+            "neighbors": ["lxd_2", "lxd_6"],
+            "roads": ["留仙大道"],
+            "speed_limit": 60.0,
+        },
+        "lxd_4": {
+            "lat": 22.5738, "lon": 113.9520,
+            "neighbors": ["lxd_1", "lxd_5", "lxd_7"],
+            "roads": ["西丽路"],
+            "speed_limit": 50.0,
+        },
+        "lxd_5": {
+            "lat": 22.5738, "lon": 113.9560,
+            "neighbors": ["lxd_2", "lxd_4", "lxd_6", "lxd_8"],
+            "roads": ["南光高速", "同发路"],
+            "speed_limit": 40.0,
+        },
+        "lxd_6": {
+            "lat": 22.5738, "lon": 113.9600,
+            "neighbors": ["lxd_3", "lxd_5", "lxd_9"],
+            "roads": ["打石一路"],
+            "speed_limit": 40.0,
+        },
+        "lxd_7": {
+            "lat": 22.5708, "lon": 113.9520,
+            "neighbors": ["lxd_4", "lxd_8"],
+            "roads": ["西丽路"],
+            "speed_limit": 50.0,
+        },
+        "lxd_8": {
+            "lat": 22.5708, "lon": 113.9560,
+            "neighbors": ["lxd_5", "lxd_7", "lxd_9"],
+            "roads": ["同发路", "宝珠路"],
+            "speed_limit": 40.0,
+        },
+        "lxd_9": {
+            "lat": 22.5708, "lon": 113.9600,
+            "neighbors": ["lxd_6", "lxd_8"],
+            "roads": ["打石一路"],
+            "speed_limit": 40.0,
+        },
+    },
+    "roads": {
+        "lxd_r1": {
+            "from": "lxd_1", "to": "lxd_2", "length": 350,
+            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": True,
+        },
+        "lxd_r2": {
+            "from": "lxd_2", "to": "lxd_3", "length": 350,
+            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": True,
+        },
+        "lxd_r3": {
+            "from": "lxd_1", "to": "lxd_4", "length": 330,
+            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": True,
+        },
+        "lxd_r4": {
+            "from": "lxd_2", "to": "lxd_5", "length": 330,
+            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": True,
+        },
+        "lxd_r5": {
+            "from": "lxd_3", "to": "lxd_6", "length": 330,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+        },
+        "lxd_r6": {
+            "from": "lxd_4", "to": "lxd_5", "length": 350,
+            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": True,
+        },
+        "lxd_r7": {
+            "from": "lxd_5", "to": "lxd_6", "length": 350,
+            "speed_limit": 40.0, "lanes": 2, "name": "同发路", "oneway": True,
+        },
+        "lxd_r8": {
+            "from": "lxd_4", "to": "lxd_7", "length": 330,
+            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": True,
+        },
+        "lxd_r9": {
+            "from": "lxd_5", "to": "lxd_8", "length": 330,
+            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": True,
+        },
+        "lxd_r10": {
+            "from": "lxd_6", "to": "lxd_9", "length": 330,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+        },
+        "lxd_r11": {
+            "from": "lxd_7", "to": "lxd_8", "length": 350,
+            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": True,
+        },
+        "lxd_r12": {
+            "from": "lxd_8", "to": "lxd_9", "length": 350,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+        },
+    },
+}

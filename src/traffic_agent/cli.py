@@ -415,7 +415,7 @@ def main():
     sim_parser.add_argument("--port", type=int, default=8080, help="Dashboard server port")
     sim_parser.add_argument(
         "--preset",
-        choices=["manhattan", "wuhan"],
+        choices=["manhattan", "wuhan", "shenzhen"],
         default=None,
         help="OSM preset network (default: 3x3 grid)",
     )
@@ -434,7 +434,7 @@ def main():
     osm_parser = subparsers.add_parser("osm", help="Run OSM network simulation")
     osm_parser.add_argument(
         "preset",
-        choices=["manhattan", "wuhan"],
+        choices=["manhattan", "wuhan", "shenzhen"],
         help="OSM preset network",
     )
     osm_parser.add_argument("--steps", type=int, default=200, help="Simulation steps")
