@@ -36,3 +36,16 @@ checkpoints/
 # OS
 .DS_Store
 Thumbs.db
+
+# Vendor JS (Three.js) — load from CDN instead
+src/traffic_agent/visualization/three*.js
+src/traffic_agent/visualization/CopyShader.js
+src/traffic_agent/visualization/EffectComposer.js
+src/traffic_agent/visualization/LuminosityHighPassShader.js
+src/traffic_agent/visualization/OrbitControls.js
+src/traffic_agent/visualization/Pass.js
+src/traffic_agent/visualization/RenderPass.js
+src/traffic_agent/visualization/UnrealBloomPass.js
+
+# Dashboard screenshots
+docs/dashboard-*.png

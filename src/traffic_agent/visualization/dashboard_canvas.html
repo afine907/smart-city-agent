@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚦 LLM Traffic Controller — Canvas 2D</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#060610;color:#e0e0ff;font-family:'SF Mono','JetBrains Mono',monospace;overflow:hidden}
+canvas#main{position:fixed;top:0;left:0;width:100%;height:100%}
+
+/* HUD overlay */
+.hud{position:fixed;z-index:10;pointer-events:none}
+.hud>*{pointer-events:auto}
+
+/* Top bar */
+.top{top:0;left:0;right:0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(6,6,16,.92),transparent)}
+.top h1{font-size:14px;letter-spacing:2px;color:#00d4ff;text-shadow:0 0 20px rgba(0,212,255,.3)}
+.pill{display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:16px;background:rgba(10,10,20,.85);border:1px solid #1a1a2e;font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%}
+.dot.on{background:#00ff88;box-shadow:0 0 8px #00ff88;animation:pulse 2s infinite}
+.dot.off{background:#ff3366}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Stats bar */
+.stats{bottom:16px;left:16px;display:flex;gap:8px;flex-wrap:wrap}
+.sc{background:rgba(10,10,20,.85);border:1px solid #1a1a2e;border-radius:8px;padding:10px 14px;backdrop-filter:blur(8px);min-width:90px}
+.sc .l{font-size:9px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px}
+.sc .v{font-size:18px;font-weight:700;margin-top:2px}
+.c1{color:#00d4ff}.c2{color:#00ff88}.c3{color:#ffcc00}.c4{color:#ff3366}
+
+/* Controls */
+.ctrl{bottom:16px;right:16px}
+.cg{background:rgba(10,10,20,.85);border:1px solid #1a1a2e;border-radius:10px;padding:14px;backdrop-filter:blur(8px)}
+.cg h3{font-size:10px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+select{width:100%;padding:7px 10px;border:1px solid #1a1a2e;border-radius:6px;background:#0a0a15;color:#e0e0ff;font-size:11px;font-family:inherit;margin-bottom:8px;cursor:pointer}
+select:focus{outline:none;border-color:#00d4ff}
+.btn{padding:7px 14px;border:1px solid #1a1a2e;border-radius:6px;background:transparent;color:#e0e0ff;font-size:11px;font-family:inherit;cursor:pointer;transition:.2s;margin-right:4px}
+.btn:hover{border-color:#00d4ff;color:#00d4ff}
+.btn.go{background:#00ff88;color:#000;border-color:#00ff88}
+.btn.go:hover{background:#00cc6a}
+.btn.stop{background:#ff3366;color:#fff;border-color:#ff3366}
+
+/* Event feed */
+.feed{top:60px;right:16px;width:260px}
+.fl{background:rgba(10,10,20,.85);border:1px solid #1a1a2e;border-radius:10px;padding:10px;backdrop-filter:blur(8px);max-height:45vh;overflow-y:auto}
+.fl::-webkit-scrollbar{width:4px}.fl::-webkit-scrollbar-thumb{background:#1a1a2e;border-radius:2px}
+.fl h3{font-size:10px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+.fi{padding:5px 7px;border-radius:3px;font-size:10px;margin-bottom:3px;border-left:2px solid;animation:slideIn .3s}
+@keyframes slideIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+.fi.thinking{border-color:#00d4ff;background:rgba(0,212,255,.04)}
+.fi.decision{border-color:#00ff88;background:rgba(0,255,136,.04)}
+.fi.conflict{border-color:#ff3366;background:rgba(255,51,102,.04)}
+.fi.coordination{border-color:#bc8cff;background:rgba(188,140,255,.04)}
+.fi .ts{color:#6a6a8a;margin-right:4px}
+.fi .ag{color:#00d4ff;font-weight:600}
+
+/* Queue chart */
+.qchart{top:60px;left:16px;width:220px}
+.qc{background:rgba(10,10,20,.85);border:1px solid #1a1a2e;border-radius:10px;padding:10px;backdrop-filter:blur(8px)}
+.qc h3{font-size:10px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+canvas#queueChart{width:200px;height:150px;border-radius:4px}
+</style>
+</head>
+<body>
+
+<canvas id="main"></canvas>
+
+<!-- Top bar -->
+<div class="hud top">
+  <h1>🚦 TRAFFIC NEURAL NETWORK</h1>
+  <div class="pill"><div class="dot off" id="sd"></div><span id="st">OFFLINE</span></div>
+</div>
+
+<!-- Stats -->
+<div class="hud stats">
+  <div class="sc"><div class="l">Vehicles</div><div class="v c1" id="s1">0</div></div>
+  <div class="sc"><div class="l">Decisions</div><div class="v c2" id="s2">0</div></div>
+  <div class="sc"><div class="l">Conflicts</div><div class="v c4" id="s3">0</div></div>
+  <div class="sc"><div class="l">Avg Delay</div><div class="v c3" id="s4">0ms</div></div>
+  <div class="sc"><div class="l">Step</div><div class="v c1" id="s5">0</div></div>
+</div>
+
+<!-- Queue chart -->
+<div class="hud qchart">
+  <div class="qc">
+    <h3>Queue Distribution</h3>
+    <canvas id="queueChart" width="200" height="150"></canvas>
+  </div>
+</div>
+
+<!-- Event feed -->
+<div class="hud feed">
+  <div class="fl">
+    <h3>Live Events</h3>
+    <div id="evList"></div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="hud ctrl">
+  <div class="cg">
+    <h3>Simulation</h3>
+    <select id="ps">
+      <option value="">3×3 Grid</option>
+      <option value="manhattan">🗽 Manhattan</option>
+      <option value="wuhan">🏙️ Wuhan</option>
+      <option value="shenzhen">💼 Shenzhen</option>
+    </select>
+    <div>
+      <button class="btn go" id="bGo" onclick="startSim()">▶ Start</button>
+      <button class="btn stop" id="bStop" onclick="stopSim()" style="display:none">■ Stop</button>
+      <button class="btn" onclick="clearFeed()">🗑</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const API = window.location.origin;
+const NEON = {
+  bg: '#060610',
+  road: '#1a1a2e',
+  roadCenter: '#2a2a4a',
+  lane: '#0d0d1a',
+  intersection: '#161628',
+  greenLight: '#00ff88',
+  redLight: '#ff3366',
+  yellowLight: '#ffcc00',
+  text: '#6a6a8a',
+  textBright: '#e0e0ff',
+  accent: '#00d4ff',
+  glow: 'rgba(0,212,255,0.15)',
+  vehicleColors: ['#00d4ff','#00ff88','#ffcc00','#ff3366','#bc8cff','#ff8844','#44ffdd','#ff44aa'],
+};
+
+// ============================================================
+// STATE
+// ============================================================
+let networkData = null;
+let vehicles = [];       // {id, segIdx, t, color, speed, from, to}
+let intersections = {};  // id -> {phase, queue, x, y, lat, lon}
+let segments = {};       // id -> {from, to, x1,y1,x2,y2, name, length}
+let es = null;
+let animFrame = 0;
+let simStep = 0;
+let canvas, ctx, qcCanvas, qcCtx;
+let W, H;
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  canvas = document.getElementById('main');
+  ctx = canvas.getContext('2d');
+  qcCanvas = document.getElementById('queueChart');
+  qcCtx = qcCanvas.getContext('2d');
+
+  resize();
+  window.addEventListener('resize', resize);
+  loadNetwork();
+  connect();
+  requestAnimationFrame(renderLoop);
+}
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+  // Queue chart HiDPI
+  const dpr = devicePixelRatio;
+  qcCanvas.width = 200 * dpr;
+  qcCanvas.height = 150 * dpr;
+  qcCanvas.style.width = '200px';
+  qcCanvas.style.height = '150px';
+  qcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ============================================================
+// NETWORK LOADING
+// ============================================================
+async function loadNetwork() {
+  try {
+    const r = await fetch(`${API}/api/network`);
+    networkData = await r.json();
+    buildGraph();
+  } catch(e) {
+    console.error('Failed to load network:', e);
+    buildDefaultGrid();
+  }
+}
+
+function buildGraph() {
+  intersections = {};
+  segments = {};
+
+  if (!networkData || !networkData.intersections) {
+    buildDefaultGrid();
+    return;
+  }
+
+  const ix = networkData.intersections;
+  const ids = Object.keys(ix);
+  const isOSM = networkData.type && networkData.type.startsWith('osm_');
+
+  if (isOSM && ids.some(id => ix[id].lat)) {
+    buildOSMGraph(ix, networkData.segments || {});
+  } else {
+    buildDefaultGrid();
+  }
+}
+
+function buildOSMGraph(ix, segs) {
+  const ids = Object.keys(ix);
+  const lats = ids.map(id => ix[id].lat).filter(Boolean);
+  const lons = ids.map(id => ix[id].lon).filter(Boolean);
+  if (!lats.length) { buildDefaultGrid(); return; }
+
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLon = Math.min(...lons), maxLon = Math.max(...lons);
+  const latR = maxLat - minLat || 0.001;
+  const lonR = maxLon - minLon || 0.001;
+
+  // Projection with padding for HUD elements
+  const PAD = 80;
+  const usableW = W - 280 - PAD * 2;  // right panel is ~260px
+  const usableH = H - 100 - PAD * 2;
+
+  function proj(lat, lon) {
+    const x = PAD + 140 + ((lon - minLon) / lonR) * usableW;
+    const y = PAD + 50 + ((maxLat - lat) / latR) * usableH;
+    return [x, y];
+  }
+
+  for (const id of ids) {
+    const d = ix[id];
+    if (!d.lat || !d.lon) continue;
+    const [x, y] = proj(d.lat, d.lon);
+    intersections[id] = { phase: 0, queue: 0, x, y, lat: d.lat, lon: d.lon };
+  }
+
+  for (const [sid, seg] of Object.entries(segs)) {
+    const from = intersections[seg.from];
+    const to = intersections[seg.to];
+    if (!from || !to) continue;
+    segments[sid] = {
+      from: seg.from, to: seg.to,
+      x1: from.x, y1: from.y,
+      x2: to.x, y2: to.y,
+      name: seg.name || '', length: seg.length || 100,
+    };
+  }
+}
+
+function buildDefaultGrid() {
+  intersections = {};
+  segments = {};
+
+  const COLS = 3, ROWS = 3;
+  const PAD = 100;
+  const usableW = W - 300 - PAD * 2;
+  const usableH = H - 120 - PAD * 2;
+  const cellW = usableW / (COLS - 1);
+  const cellH = usableH / (ROWS - 1);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const id = `ix_${r}_${c}`;
+      intersections[id] = {
+        phase: 0, queue: 0,
+        x: PAD + 100 + c * cellW,
+        y: PAD + 60 + r * cellH,
+      };
+    }
+  }
+
+  // Horizontal segments
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS - 1; c++) {
+      const from = `ix_${r}_${c}`, to = `ix_${r}_${c+1}`;
+      const sid = `h_${r}_${c}`;
+      segments[sid] = {
+        from, to,
+        x1: intersections[from].x, y1: intersections[from].y,
+        x2: intersections[to].x, y2: intersections[to].y,
+        name: `R${r}`, length: 200,
+      };
+    }
+  }
+
+  // Vertical segments
+  for (let r = 0; r < ROWS - 1; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const from = `ix_${r}_${c}`, to = `ix_${r+1}_${c}`;
+      const sid = `v_${r}_${c}`;
+      segments[sid] = {
+        from, to,
+        x1: intersections[from].x, y1: intersections[from].y,
+        x2: intersections[to].x, y2: intersections[to].y,
+        name: `C${c}`, length: 200,
+      };
+    }
+  }
+}
+
+// ============================================================
+// SSE CONNECTION
+// ============================================================
+function connect() {
+  if (es) es.close();
+  es = new EventSource(`${API}/api/events/stream`);
+  es.onopen = () => {
+    document.getElementById('sd').className = 'dot on';
+    document.getElementById('st').textContent = 'LIVE';
+  };
+  es.onerror = () => {
+    document.getElementById('sd').className = 'dot off';
+    document.getElementById('st').textContent = 'OFFLINE';
+    // Auto-reconnect after 3s
+    es.close();
+    setTimeout(connect, 3000);
+  };
+
+  ['thinking','decision','conflict','coordination','metrics','simulation_start','simulation_step','simulation_end']
+    .forEach(t => es.addEventListener(t, e => handleEvent(JSON.parse(e.data))));
+  es.addEventListener('keepalive', () => {});
+}
+
+function handleEvent(ev) {
+  const aid = ev.agent_id || '';
+  const data = ev.data || {};
+
+  // Update intersection state
+  if (intersections[aid]) {
+    if (ev.event_type === 'decision' && data.decision) {
+      intersections[aid].phase = data.decision.phase;
+    }
+    if (data.queue !== undefined) {
+      intersections[aid].queue = data.queue;
+    }
+    // Flash thinking glow
+    if (ev.event_type === 'thinking') {
+      intersections[aid]._thinkTime = Date.now();
+    }
+  }
+
+  // Update step counter
+  if (ev.event_type === 'simulation_step') {
+    simStep = data.step || simStep + 1;
+    document.getElementById('s5').textContent = simStep;
+    // Spawn vehicles on step
+    spawnVehicles();
+  }
+
+  // Update metrics
+  if (ev.event_type === 'simulation_step' || ev.event_type === 'simulation_end') {
+    fetchMetrics();
+  }
+
+  // Event feed
+  addFeedItem(ev);
+}
+
+async function fetchMetrics() {
+  try {
+    const r = await fetch(`${API}/api/events/metrics`);
+    const m = await r.json();
+    document.getElementById('s1').textContent = vehicles.length;
+    document.getElementById('s2').textContent = m.total_decisions || 0;
+    document.getElementById('s3').textContent = m.total_conflicts || 0;
+    document.getElementById('s4').textContent = (m.avg_decision_ms || 0).toFixed(0) + 'ms';
+  } catch {}
+}
+
+// ============================================================
+// VEHICLE ANIMATION
+// ============================================================
+function spawnVehicles() {
+  const segIds = Object.keys(segments);
+  if (!segIds.length) return;
+
+  // Spawn 2-5 vehicles per step on random segments
+  const count = 2 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i++) {
+    const sid = segIds[Math.floor(Math.random() * segIds.length)];
+    const seg = segments[sid];
+    const reverse = Math.random() > 0.5;
+    vehicles.push({
+      id: `v_${Date.now()}_${Math.random().toString(36).slice(2,6)}`,
+      segId: sid,
+      t: 0,
+      speed: 0.003 + Math.random() * 0.005,
+      color: NEON.vehicleColors[Math.floor(Math.random() * NEON.vehicleColors.length)],
+      reverse,
+      from: reverse ? seg.to : seg.from,
+      to: reverse ? seg.from : seg.to,
+    });
+  }
+
+  // Cap vehicles
+  if (vehicles.length > 200) {
+    vehicles = vehicles.slice(-150);
+  }
+  document.getElementById('s1').textContent = vehicles.length;
+}
+
+function updateVehicles() {
+  for (let i = vehicles.length - 1; i >= 0; i--) {
+    const v = vehicles[i];
+    v.t += v.speed;
+    if (v.t >= 1) {
+      // Vehicle reached end — maybe respawn on a connected segment
+      const seg = segments[v.segId];
+      if (seg && Math.random() > 0.3) {
+        // Find connected segments from the destination
+        const nextSegs = Object.entries(segments)
+          .filter(([sid, s]) => s.from === v.to || s.to === v.to)
+          .map(([sid]) => sid);
+        if (nextSegs.length) {
+          const nextSid = nextSegs[Math.floor(Math.random() * nextSegs.length)];
+          const nextSeg = segments[nextSid];
+          const reverse = nextSeg.to === v.to;
+          v.segId = nextSid;
+          v.t = 0;
+          v.reverse = reverse;
+          v.from = reverse ? nextSeg.to : nextSeg.from;
+          v.to = reverse ? nextSeg.from : nextSeg.to;
+          v.speed = 0.003 + Math.random() * 0.005;
+          continue;
+        }
+      }
+      vehicles.splice(i, 1);
+    }
+  }
+}
+
+// ============================================================
+// CANVAS RENDERING
+// ============================================================
+function renderLoop(ts) {
+  animFrame++;
+  updateVehicles();
+  draw();
+  drawQueueChart();
+  requestAnimationFrame(renderLoop);
+}
+
+function draw() {
+  // Clear
+  ctx.fillStyle = NEON.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid pattern background
+  drawGridPattern();
+
+  // Roads (segments)
+  for (const [sid, seg] of Object.entries(segments)) {
+    drawRoad(seg);
+  }
+
+  // Vehicles
+  for (const v of vehicles) {
+    drawVehicle(v);
+  }
+
+  // Intersections
+  for (const [id, ix] of Object.entries(intersections)) {
+    drawIntersection(id, ix);
+  }
+}
+
+function drawGridPattern() {
+  ctx.strokeStyle = 'rgba(20,20,40,0.3)';
+  ctx.lineWidth = 0.5;
+  const step = 40;
+  for (let x = 0; x < W; x += step) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += step) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+}
+
+function drawRoad(seg) {
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  const len = Math.sqrt(dx*dx + dy*dy);
+  if (len < 1) return;
+
+  // Normal vector for road width
+  const nx = -dy / len;
+  const ny = dx / len;
+  const halfW = 12;  // half road width
+
+  // Road surface
+  ctx.fillStyle = NEON.road;
+  ctx.beginPath();
+  ctx.moveTo(seg.x1 + nx * halfW, seg.y1 + ny * halfW);
+  ctx.lineTo(seg.x2 + nx * halfW, seg.y2 + ny * halfW);
+  ctx.lineTo(seg.x2 - nx * halfW, seg.y2 - ny * halfW);
+  ctx.lineTo(seg.x1 - nx * halfW, seg.y1 - ny * halfW);
+  ctx.closePath();
+  ctx.fill();
+
+  // Road edge glow
+  ctx.strokeStyle = 'rgba(0,212,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(seg.x1 + nx * halfW, seg.y1 + ny * halfW);
+  ctx.lineTo(seg.x2 + nx * halfW, seg.y2 + ny * halfW);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(seg.x1 - nx * halfW, seg.y1 - ny * halfW);
+  ctx.lineTo(seg.x2 - nx * halfW, seg.y2 - ny * halfW);
+  ctx.stroke();
+
+  // Center dashed line (lane marking)
+  ctx.strokeStyle = NEON.roadCenter;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([6, 8]);
+  ctx.beginPath();
+  ctx.moveTo(seg.x1, seg.y1);
+  ctx.lineTo(seg.x2, seg.y2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Road name label
+  if (seg.name) {
+    const mx = (seg.x1 + seg.x2) / 2;
+    const my = (seg.y1 + seg.y2) / 2;
+    ctx.save();
+    ctx.translate(mx, my);
+    const angle = Math.atan2(dy, dx);
+    ctx.rotate(angle > Math.PI / 2 || angle < -Math.PI / 2 ? angle + Math.PI : angle);
+    ctx.fillStyle = NEON.text;
+    ctx.font = '9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(seg.name, 0, -halfW - 4);
+    ctx.restore();
+  }
+}
+
+function drawIntersection(id, ix) {
+  const r = 18;
+  const now = Date.now();
+  const thinking = ix._thinkTime && (now - ix._thinkTime < 1500);
+
+  // Glow effect when thinking
+  if (thinking) {
+    const glowR = r + 10 + Math.sin(now / 200) * 4;
+    const grd = ctx.createRadialGradient(ix.x, ix.y, r, ix.x, ix.y, glowR);
+    grd.addColorStop(0, 'rgba(0,212,255,0.3)');
+    grd.addColorStop(1, 'rgba(0,212,255,0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(ix.x, ix.y, glowR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Intersection background
+  ctx.fillStyle = NEON.intersection;
+  ctx.strokeStyle = thinking ? NEON.accent : '#2a2a4a';
+  ctx.lineWidth = thinking ? 2 : 1;
+  ctx.beginPath();
+  ctx.arc(ix.x, ix.y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Traffic light indicator
+  const phase = ix.phase;
+  let lightColor;
+  if (phase === 0) lightColor = NEON.greenLight;
+  else if (phase === 1) lightColor = NEON.redLight;
+  else lightColor = NEON.yellowLight;
+
+  // Light glow
+  const glowGrd = ctx.createRadialGradient(ix.x, ix.y, 0, ix.x, ix.y, r + 4);
+  glowGrd.addColorStop(0, lightColor + '40');
+  glowGrd.addColorStop(1, lightColor + '00');
+  ctx.fillStyle = glowGrd;
+  ctx.beginPath();
+  ctx.arc(ix.x, ix.y, r + 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Light dot
+  ctx.fillStyle = lightColor;
+  ctx.shadowColor = lightColor;
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.arc(ix.x, ix.y, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Intersection ID label
+  ctx.fillStyle = NEON.textBright;
+  ctx.font = 'bold 9px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // Shorten id for display
+  const shortId = id.length > 10 ? id.slice(-6) : id;
+  ctx.fillText(shortId, ix.x, ix.y - r - 10);
+
+  // Queue bar under intersection
+  if (ix.queue > 0) {
+    const barW = 30;
+    const barH = 4;
+    const barX = ix.x - barW / 2;
+    const barY = ix.y + r + 6;
+    const fillW = Math.min(ix.queue * 3, barW);
+
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(barX, barY, barW, barH);
+
+    const qColor = ix.queue > 10 ? NEON.redLight : ix.queue > 5 ? NEON.yellowLight : NEON.greenLight;
+    ctx.fillStyle = qColor;
+    ctx.fillRect(barX, barY, fillW, barH);
+
+    ctx.fillStyle = NEON.text;
+    ctx.font = '8px monospace';
+    ctx.fillText(`q:${ix.queue}`, ix.x, barY + barH + 10);
+  }
+}
+
+function drawVehicle(v) {
+  const seg = segments[v.segId];
+  if (!seg) return;
+
+  const t = v.reverse ? 1 - v.t : v.t;
+  const x = seg.x1 + (seg.x2 - seg.x1) * t;
+  const y = seg.y1 + (seg.y2 - seg.y1) * t;
+
+  // Direction for car orientation
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  const angle = Math.atan2(dy, dx) + (v.reverse ? Math.PI : 0);
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  // Vehicle body (small rectangle)
+  const vw = 10, vh = 5;
+  ctx.fillStyle = v.color;
+  ctx.shadowColor = v.color;
+  ctx.shadowBlur = 6;
+  ctx.fillRect(-vw/2, -vh/2, vw, vh);
+  ctx.shadowBlur = 0;
+
+  // Headlight
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(vw/2 - 1, -1.5, 2, 3);
+
+  ctx.restore();
+}
+
+// ============================================================
+// QUEUE CHART (small canvas)
+// ============================================================
+function drawQueueChart() {
+  const cw = 200, ch = 150;
+  qcCtx.fillStyle = '#0a0a15';
+  qcCtx.fillRect(0, 0, cw, ch);
+
+  const ids = Object.keys(intersections);
+  if (!ids.length) return;
+
+  const maxQ = Math.max(1, ...ids.map(id => intersections[id].queue));
+  const barW = Math.min(20, (cw - 20) / ids.length - 2);
+  const gap = ((cw - 20) - barW * ids.length) / (ids.length + 1);
+
+  ids.forEach((id, i) => {
+    const ix = intersections[id];
+    const q = ix.queue;
+    const barH = (q / maxQ) * (ch - 30);
+    const x = 10 + gap + i * (barW + gap);
+    const y = ch - 15 - barH;
+
+    // Bar
+    const color = q > 10 ? NEON.redLight : q > 5 ? NEON.yellowLight : NEON.greenLight;
+    qcCtx.fillStyle = color;
+    qcCtx.shadowColor = color;
+    qcCtx.shadowBlur = 4;
+    qcCtx.fillRect(x, y, barW, barH);
+    qcCtx.shadowBlur = 0;
+
+    // Label
+    qcCtx.fillStyle = NEON.text;
+    qcCtx.font = '7px monospace';
+    qcCtx.textAlign = 'center';
+    const label = id.length > 8 ? id.slice(-4) : id;
+    qcCtx.fillText(label, x + barW/2, ch - 5);
+  });
+
+  // Y-axis label
+  qcCtx.fillStyle = NEON.text;
+  qcCtx.font = '8px monospace';
+  qcCtx.textAlign = 'left';
+  qcCtx.fillText(`max:${maxQ}`, 4, 12);
+}
+
+// ============================================================
+// EVENT FEED
+// ============================================================
+function addFeedItem(ev) {
+  const list = document.getElementById('evList');
+  const el = document.createElement('div');
+  el.className = `fi ${ev.event_type}`;
+  const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
+  const data = ev.data || {};
+  let detail = '';
+  if (data.thought) detail = data.thought.substring(0, 60);
+  else if (data.decision) detail = `phase=${data.decision.phase}`;
+  else if (data.conflict_type) detail = data.conflict_type;
+  else if (data.message) detail = data.message.substring(0, 50);
+  else detail = JSON.stringify(data).substring(0, 50);
+
+  el.innerHTML = `<span class="ts">${time}</span><span class="ag">${ev.agent_id||'sys'}</span> ${detail}`;
+  list.prepend(el);
+  if (list.children.length > 60) list.lastChild.remove();
+}
+
+function clearFeed() {
+  document.getElementById('evList').innerHTML = '';
+}
+
+// ============================================================
+// SIMULATION CONTROL
+// ============================================================
+async function startSim() {
+  const preset = document.getElementById('ps').value || null;
+  try {
+    let url = `${API}/api/simulation/start?steps=50&speed=2`;
+    if (preset) url += `&preset=${preset}`;
+    await fetch(url, { method: 'POST' });
+    document.getElementById('bGo').style.display = 'none';
+    document.getElementById('bStop').style.display = 'inline-block';
+    // Reload network topology
+    setTimeout(loadNetwork, 500);
+  } catch(e) { alert('Start failed: ' + e.message); }
+}
+
+async function stopSim() {
+  try {
+    await fetch(`${API}/api/simulation/stop`, { method: 'POST' });
+    document.getElementById('bGo').style.display = 'inline-block';
+    document.getElementById('bStop').style.display = 'none';
+  } catch {}
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+init();
+</script>
+</body>
+</html>
