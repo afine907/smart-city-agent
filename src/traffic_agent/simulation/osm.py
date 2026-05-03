@@ -158,10 +158,6 @@ class OSMNetwork:
 
     def _convert_graph(self, G) -> None:
         """Convert osmnx MultiDiGraph to our format."""
-        try:
-            import osmnx as ox
-        except ImportError:
-            return
 
         # Extract intersections (nodes)
         for node_id, node_data in G.nodes(data=True):

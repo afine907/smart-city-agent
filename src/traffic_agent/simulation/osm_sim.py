@@ -158,6 +158,24 @@ class OSMSimulation:
         # Build route planner graph
         self.router.build_graph(self.segments)
 
+        # Pre-create virtual segments for boundaries with no incoming roads
+        self._virtual_segments: dict[str, str] = {}  # ix_id -> virtual road_id
+        for ix_id in self.boundary_intersections:
+            has_incoming = any(seg.to_id == ix_id for seg in self.segments.values())
+            if not has_incoming:
+                road_id = f"virtual_{ix_id}"
+                self.segments[road_id] = OSMSegment(
+                    road_id=road_id,
+                    from_id=f"boundary_{ix_id}",
+                    to_id=ix_id,
+                    length=self.config.road_length,
+                    speed_limit=self.config.speed_limit,
+                    lanes=2,
+                    name="virtual",
+                    oneway=True,
+                )
+                self._virtual_segments[ix_id] = road_id
+
     def get_neighbors(self, ix_id: str) -> list[str]:
         """Get neighbor intersection IDs."""
         return self.osm.get_neighbors(ix_id)
@@ -368,21 +386,15 @@ class OSMSimulation:
             vehicle.position = shortest.length
             vehicle.speed = shortest.speed_limit
             shortest.vehicles.append(vehicle)
+        elif ix_id in self._virtual_segments:
+            # Use pre-created virtual segment
+            seg = self.segments[self._virtual_segments[ix_id]]
+            vehicle.position = seg.length
+            vehicle.speed = seg.speed_limit
+            seg.vehicles.append(vehicle)
         else:
-            # No incoming segments — create a virtual segment for the boundary
-            # Vehicle enters from "outside" the network
-            road_id = f"virtual_{self._vehicle_counter}"
-            self.segments[road_id] = OSMSegment(
-                road_id=road_id,
-                from_id=f"boundary_{ix_id}",
-                to_id=ix_id,
-                length=self.config.road_length,
-                speed_limit=self.config.speed_limit,
-                lanes=2,
-                name="virtual",
-                oneway=True,
-                vehicles=[vehicle],
-            )
+            # No path available — vehicle can't enter
+            self.total_vehicles_completed += 1
 
     def _move_vehicles(self, dt: float) -> None:
         """Move vehicles through road segments."""

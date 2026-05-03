@@ -69,7 +69,6 @@ class RoutePlanner:
         # Dijkstra's algorithm
         dist = {start: 0.0}
         prev: Dict[str, Optional[str]] = {start: None}
-        prev_edge: Dict[str, Optional[str]] = {start: None}
         visited = set()
         
         pq = [_PriorityEntry(0.0, start)]
@@ -92,7 +91,6 @@ class RoutePlanner:
                 if new_dist < dist.get(v, float("inf")):
                     dist[v] = new_dist
                     prev[v] = u
-                    prev_edge[v] = edge_id
                     heapq.heappush(pq, _PriorityEntry(new_dist, v))
         
         if end not in prev:
