@@ -68,6 +68,9 @@ python -m traffic_agent.cli compare --steps 100
 # 运行多场景测试
 python -m traffic_agent.cli scenario morning_peak --mode compare
 python -m traffic_agent.cli scenario accident --mode compare
+
+# 运行质量 Benchmark（固定配时 vs 自适应 vs 随机）
+python -m traffic_agent.cli benchmark --preset shenzhen --steps 200
 ```
 
 ### 🗺️ OpenStreetMap 路网仿真
