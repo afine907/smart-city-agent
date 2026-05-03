@@ -42,13 +42,41 @@ def get_collector() -> EventCollector:
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serve the dashboard HTML page."""
-    dashboard_path = Path(__file__).parent.parent.parent / "visualization" / "dashboard.html"
-    if not dashboard_path.exists():
-        dashboard_path = Path(__file__).parent.parent / "visualization" / "dashboard.html"
+    """Serve the Canvas 2D dashboard HTML page."""
+    vis_dir = Path(__file__).parent.parent / "visualization"
+    if not vis_dir.exists():
+        vis_dir = Path(__file__).parent.parent.parent / "visualization"
+    dashboard_path = vis_dir / "dashboard_canvas.html"
     if dashboard_path.exists():
         return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Dashboard not found</h1>", status_code=404)
+
+
+@app.get("/dashboard/3d", response_class=HTMLResponse)
+async def serve_dashboard_3d():
+    """Serve the legacy 3D dashboard."""
+    vis_dir = Path(__file__).parent.parent / "visualization"
+    if not vis_dir.exists():
+        vis_dir = Path(__file__).parent.parent.parent / "visualization"
+    dashboard_path = vis_dir / "dashboard_3d.html"
+    if dashboard_path.exists():
+        return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>3D Dashboard not found</h1>", status_code=404)
+
+
+@app.get("/dashboard/classic", response_class=HTMLResponse)
+async def serve_dashboard_classic():
+    """Serve the classic SVG dashboard."""
+    vis_dir = Path(__file__).parent.parent / "visualization"
+    if not vis_dir.exists():
+        vis_dir = Path(__file__).parent.parent.parent / "visualization"
+    dashboard_path = vis_dir / "dashboard.html"
+    if dashboard_path.exists():
+        return HTMLResponse(content=dashboard_path.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        content="<h1>Classic Dashboard not found</h1>",
+        status_code=404,
+    )
 
 
 @app.get("/api/events/stream")
@@ -168,36 +196,39 @@ async def _run_simulation(steps: int, speed: float, preset: str | None = None):
 
         if preset:
             from traffic_agent.simulation.osm_sim import OSMSimulation
+
             sim = OSMSimulation.from_preset(preset, config)
             net_type = f"osm_{preset}"
         else:
             from traffic_agent.simulation.grid import GridSimulation
+
             sim = GridSimulation(config=config)
             net_type = "grid_3x3"
 
         # Export network topology for dashboard
-        if hasattr(sim, 'intersections') and hasattr(sim, 'segments'):
+        if hasattr(sim, "intersections") and hasattr(sim, "segments"):
             # OSM simulation
+            osm_ix = sim.osm.intersections
             _network_topology = {
                 "type": net_type,
                 "intersections": {
                     ix_id: {
-                        "lat": sim.osm.intersections[ix_id].lat if ix_id in sim.osm.intersections else 0,
-                        "lon": sim.osm.intersections[ix_id].lon if ix_id in sim.osm.intersections else 0,
+                        "lat": osm_ix[ix_id].lat if ix_id in osm_ix else 0,
+                        "lon": osm_ix[ix_id].lon if ix_id in osm_ix else 0,
                         "neighbors": sim.get_neighbors(ix_id),
                     }
                     for ix_id in sim.intersections
                 },
                 "segments": {
                     seg_id: {
-                    "from": seg.from_id,
-                    "to": seg.to_id,
-                    "length": seg.length,
-                    "name": seg.name,
-                }
-                for seg_id, seg in sim.segments.items()
-                if not seg_id.startswith("virtual_")
-            },
+                        "from": seg.from_id,
+                        "to": seg.to_id,
+                        "length": seg.length,
+                        "name": seg.name,
+                    }
+                    for seg_id, seg in sim.segments.items()
+                    if not seg_id.startswith("virtual_")
+                },
             }
         else:
             # Grid simulation

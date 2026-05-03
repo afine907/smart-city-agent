@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚦 Traffic Neural Network — 3D</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#060610;color:#e0e0ff;font-family:'SF Mono',monospace;overflow:hidden}
+canvas{position:fixed;top:0;left:0;width:100%;height:100%}
+.hud{position:fixed;z-index:10;pointer-events:none}
+.hud>*{pointer-events:auto}
+.top{top:0;left:0;right:0;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(6,6,16,.95),transparent)}
+.top h1{font-size:15px;letter-spacing:2px;color:#00d4ff;text-shadow:0 0 20px rgba(0,212,255,.4)}
+.pill{display:flex;align-items:center;gap:8px;padding:5px 12px;border-radius:16px;background:rgba(15,15,25,.9);border:1px solid #1a1a2e;font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%}.dot.on{background:#00ff88;box-shadow:0 0 8px #00ff88;animation:p 2s infinite}.dot.off{background:#red}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.4}}
+.stats{bottom:16px;left:16px;display:flex;gap:8px;flex-wrap:wrap}
+.sc{background:rgba(15,15,25,.9);border:1px solid #1a1a2e;border-radius:8px;padding:10px 14px;backdrop-filter:blur(8px);min-width:100px}
+.sc .l{font-size:9px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px}
+.sc .v{font-size:20px;font-weight:700;margin-top:2px}
+.c1{color:#00d4ff}.c2{color:#00ff88}.c3{color:#ffcc00}.c4{color:#ff3366}
+.ctrl{bottom:16px;right:16px}
+.cg{background:rgba(15,15,25,.9);border:1px solid #1a1a2e;border-radius:10px;padding:14px;backdrop-filter:blur(8px)}
+.cg h3{font-size:10px;color:#6a6a8a;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px}
+select{width:100%;padding:7px 10px;border:1px solid #1a1a2e;border-radius:6px;background:#0a0a15;color:#e0e0ff;font-size:11px;font-family:inherit;margin-bottom:8px}
+.btn{padding:7px 14px;border:1px solid #1a1a2e;border-radius:6px;background:transparent;color:#e0e0ff;font-size:11px;font-family:inherit;cursor:pointer;transition:.2s}
+.btn:hover{border-color:#00d4ff;color:#00d4ff}.btn.go{background:#00ff88;color:#000;border-color:#00ff88}.btn.stop{background:#ff3366;color:#fff;border-color:#ff3366}
+.feed{top:60px;right:16px;width:260px}
+.fl{background:rgba(15,15,25,.9);border:1px solid #1a1a2e;border-radius:10px;padding:10px;backdrop-filter:blur(8px);max-height:40vh;overflow-y:auto}
+.fi{padding:5px 7px;border-radius:3px;font-size:10px;margin-bottom:3px;border-left:2px solid;animation:f .3s}
+@keyframes f{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+.fi.tk{border-color:#00d4ff;background:rgba(0,212,255,.04)}.fi.dc{border-color:#00ff88;background:rgba(0,255,136,.04)}.fi.cf{border-color:#ff3366;background:rgba(255,51,102,.04)}
+.fi .ts{color:#6a6a8a}.fi .ag{color:#00d4ff;font-weight:600}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hud top"><h1>🚦 TRAFFIC NEURAL NETWORK</h1><div class="pill"><div class="dot off" id="sd"></div><span id="st">OFFLINE</span></div></div>
+<div class="hud stats">
+  <div class="sc"><div class="l">Vehicles</div><div class="v c1" id="s1">0</div></div>
+  <div class="sc"><div class="l">Decisions</div><div class="v c2" id="s2">0</div></div>
+  <div class="sc"><div class="l">Conflicts</div><div class="v c4" id="s3">0</div></div>
+  <div class="sc"><div class="l">Avg Delay</div><div class="v c3" id="s4">0ms</div></div>
+  <div class="sc"><div class="l">Step</div><div class="v c1" id="s5">0</div></div>
+</div>
+<div class="hud ctrl"><div class="cg">
+  <h3>Simulation</h3>
+  <select id="ps">
+    <option value="">3×3 Grid</option>
+    <option value="manhattan">Manhattan</option>
+    <option value="wuhan">Wuhan Optics Valley</option>
+    <option value="shenzhen" selected>Shenzhen Liuxiandong</option>
+  </select>
+  <button class="btn go" id="bGo" onclick="go()">▶ START</button>
+  <button class="btn stop" id="bStop" onclick="stop()" style="display:none">■ STOP</button>
+</div></div>
+<div class="hud feed"><div class="fl" id="fl"></div></div>
+
+<script>
+const API=location.origin;
+let nd=null,es=null,running=false,step=0;
+const cvs=document.getElementById('c'),ctx=cvs.getContext('2d');
+let W,H;
+const vehicles=[];
+const CAM={x:0,y:120,z:180,rx:-0.55,ry:0,rz:0,fov:50};
+let drag=false,lmx=0,lmy=0;
+
+function resize(){W=cvs.width=innerWidth;H=cvs.height=innerHeight}
+resize();addEventListener('resize',resize);
+
+// Mouse controls
+cvs.onmousedown=e=>{drag=true;lmx=e.clientX;lmy=e.clientY};
+cvs.onmousemove=e=>{if(!drag)return;CAM.ry+=(e.clientX-lmx)*0.005;CAM.rx+=(e.clientY-lmy)*0.005;CAM.rx=Math.max(-1.2,Math.min(-0.1,CAM.rx));lmx=e.clientX;lmy=e.clientY};
+cvs.onmouseup=()=>drag=false;
+cvs.onwheel=e=>{CAM.z+=e.deltaY*0.3;CAM.z=Math.max(50,Math.min(500,CAM.z))};
+
+// 3D projection
+function proj(x,y,z){
+  // Rotate around Y
+  const cr=Math.cos(CAM.ry),sr=Math.sin(CAM.ry);
+  let rx=x*cr-z*sr, rz=x*sr+z*cr, ry=y;
+  // Rotate around X
+  const cx=Math.cos(CAM.rx),sx=Math.sin(CAM.rx);
+  let ry2=ry*cx-rz*sx, rz2=ry*sx+rz*cx;
+  rz2+=CAM.z;
+  if(rz2<1)return null;
+  const f=CAM.fov*W/(rz2*2);
+  return{sx:W/2+rx*f,sy:H/2+ry2*f,z:rz2,f};
+}
+
+// Draw ground grid
+function drawGrid(){
+  ctx.strokeStyle='#0d0d1a';ctx.lineWidth=1;
+  for(let i=-200;i<=200;i+=20){
+    let p1=proj(i,0,-200),p2=proj(i,0,200);
+    if(p1&&p2){ctx.beginPath();ctx.moveTo(p1.sx,p1.sy);ctx.lineTo(p2.sx,p2.sy);ctx.stroke()}
+    p1=proj(-200,0,i);p2=proj(200,0,i);
+    if(p1&&p2){ctx.beginPath();ctx.moveTo(p1.sx,p1.sy);ctx.lineTo(p2.sx,p2.sy);ctx.stroke()}
+  }
+}
+
+// Draw road
+function drawRoad(x1,z1,x2,z2,name){
+  const w=12;  // Wider roads
+  const dx=x2-x1,dz=z2-z1,len=Math.sqrt(dx*dx+dz*dz);
+  if(len<1)return;
+  const nx=-dz/len*w/2,nz=dx/len*w/2;
+  const corners=[
+    proj(x1+nx,0.5,z1+nz),proj(x2+nx,0.5,z2+nz),
+    proj(x2-nx,0.5,z2-nz),proj(x1-nx,0.5,z1-nz)
+  ];
+  if(corners.some(c=>!c))return;
+  // Road surface - brighter
+  ctx.fillStyle='#181835';ctx.beginPath();
+  ctx.moveTo(corners[0].sx,corners[0].sy);
+  corners.slice(1).forEach(c=>ctx.lineTo(c.sx,c.sy));
+  ctx.closePath();ctx.fill();
+  // Road border - visible glow
+  ctx.strokeStyle='rgba(0,180,255,0.25)';ctx.lineWidth=2;ctx.stroke();
+  // Center dashes
+  const pm1=proj(x1,0.6,z1),pm2=proj(x2,0.6,z2);
+  if(pm1&&pm2){
+    ctx.strokeStyle='rgba(100,140,180,0.4)';ctx.lineWidth=1;ctx.setLineDash([8,10]);
+    ctx.beginPath();ctx.moveTo(pm1.sx,pm1.sy);ctx.lineTo(pm2.sx,pm2.sy);ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Road name
+  if(name){
+    const pm=proj((x1+x2)/2,4,(z1+z2)/2);
+    if(pm){ctx.fillStyle='rgba(0,180,255,0.5)';ctx.font='10px monospace';ctx.textAlign='center';ctx.fillText(name,pm.sx,pm.sy)}
+  }
+}
+
+// Draw intersection
+function drawIntersection(id,x,z,phase){
+  const p=proj(x,0,z);
+  if(!p)return;
+  const r=Math.max(8,20*p.f/W*2);
+  // Outer glow
+  ctx.beginPath();ctx.arc(p.sx,p.sy,r+8,0,Math.PI*2);
+  const grd=ctx.createRadialGradient(p.sx,p.sy,r,p.sx,p.sy,r+12);
+  grd.addColorStop(0,phase==='NS_GREEN'?'rgba(0,255,136,0.3)':'rgba(255,51,102,0.3)');
+  grd.addColorStop(1,'transparent');
+  ctx.fillStyle=grd;ctx.fill();
+  // Core ring
+  ctx.beginPath();ctx.arc(p.sx,p.sy,r,0,Math.PI*2);
+  ctx.fillStyle='#0c0c20';ctx.fill();
+  ctx.strokeStyle=phase==='NS_GREEN'?'#00ff88':'#ff3366';ctx.lineWidth=3;ctx.stroke();
+  // Inner dot
+  ctx.beginPath();ctx.arc(p.sx,p.sy,r*0.4,0,Math.PI*2);
+  ctx.fillStyle=phase==='NS_GREEN'?'#00ff88':'#ff3366';ctx.fill();
+  ctx.shadowColor=phase==='NS_GREEN'?'#00ff88':'#ff3366';ctx.shadowBlur=12;ctx.fill();ctx.shadowBlur=0;
+  // Label
+  const lp=proj(x,8,z);
+  if(lp){ctx.fillStyle='rgba(0,212,255,0.7)';ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillText(id,lp.sx,lp.sy)}
+}
+
+// Vehicle
+function drawVehicle(v){
+  const p=proj(v.x,1.5,v.z);
+  if(!p)return;
+  const s=Math.max(2,5*p.f/W*2);
+  ctx.fillStyle=v.emergency?'#ff3366':'#00d4ff';
+  ctx.shadowColor=v.emergency?'#ff3366':'#00d4ff';ctx.shadowBlur=6;
+  ctx.fillRect(p.sx-s/2,p.sy-s/4,s,s/2);
+  ctx.shadowBlur=0;
+}
+
+// Camera auto-rotate when idle
+let idleTimer=0;
+function autoRotate(){
+  if(!drag)idleTimer++;
+  if(idleTimer>300){CAM.ry+=0.001;idleTimer=0}
+}
+
+// Main render loop
+function render(){
+  requestAnimationFrame(render);
+  ctx.fillStyle='#060610';ctx.fillRect(0,0,W,H);
+
+  drawGrid();
+
+  // Draw roads
+  if(nd&&nd.segments){
+    for(const[sid,s] of Object.entries(nd.segments)){
+      const fi=nd.intersections[s.from],ti=nd.intersections[s.to];
+      if(!fi||!ti)continue;
+      const sc=getScale();
+      const x1=(fi.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2;
+      const z1=(sc.maxLat-fi.lat)/sc.latR*sc.scale-sc.scale/2;
+      const x2=(ti.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2;
+      const z2=(sc.maxLat-ti.lat)/sc.latR*sc.scale-sc.scale/2;
+      drawRoad(x1,z1,x2,z2,s.name);
+    }
+  }
+
+  // Draw intersections
+  if(nd&&nd.intersections){
+    const sc=getScale();
+    for(const[id,d] of Object.entries(nd.intersections)){
+      if(!d.lat||!d.lon)continue;
+      const x=(d.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2;
+      const z=(sc.maxLat-d.lat)/sc.latR*sc.scale-sc.scale/2;
+      const phase=intersectionPhases[id]||'NS_GREEN';
+      drawIntersection(id,x,z,phase);
+    }
+  }
+
+  // Draw vehicles
+  vehicles.forEach(drawVehicle);
+
+  // Update vehicles
+  updateVehicles();
+
+  autoRotate();
+}
+
+// Scale helper
+let _sc=null;
+function getScale(){
+  if(_sc)return _sc;
+  if(!nd||!nd.intersections)return{minLat:0,maxLat:1,minLon:0,maxLon:1,latR:1,lonR:1,scale:200};
+  const ids=Object.keys(nd.intersections).filter(id=>nd.intersections[id].lat);
+  const lats=ids.map(id=>nd.intersections[id].lat);
+  const lons=ids.map(id=>nd.intersections[id].lon);
+  const latSpan=Math.max(...lats)-Math.min(...lats);
+  const lonSpan=Math.max(...lons)-Math.min(...lons);
+  _sc={
+    minLat:Math.min(...lats),maxLat:Math.max(...lats),
+    minLon:Math.min(...lons),lonSpan:lonSpan,
+    lonR:Math.max(0.001,lonSpan),
+    latR:Math.max(0.001,latSpan),
+    scale:300  // Fixed scale for consistent view
+  };
+  return _sc;
+}
+
+// Vehicle management
+function spawnVehicle(){
+  if(!nd||!nd.segments)return;
+  const segs=Object.values(nd.segments);
+  const seg=segs[Math.floor(Math.random()*segs.length)];
+  const fi=nd.intersections[seg.from],ti=nd.intersections[seg.to];
+  if(!fi||!ti)return;
+  const sc=getScale();
+  vehicles.push({
+    x:(fi.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2,
+    z:(sc.maxLat-fi.lat)/sc.latR*sc.scale-sc.scale/2,
+    tx:(ti.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2,
+    tz:(sc.maxLat-ti.lat)/sc.latR*sc.scale-sc.scale/2,
+    progress:0,speed:0.005+Math.random()*0.008,
+    fromId:seg.from,toId:seg.to,
+    emergency:Math.random()>0.92
+  });
+}
+
+function updateVehicles(){
+  for(let i=vehicles.length-1;i>=0;i--){
+    const v=vehicles[i];
+    v.progress+=v.speed;
+    if(v.progress>=1){
+      vehicles.splice(i,1);
+      // Continue to next segment
+      if(nd){
+        const next=Object.values(nd.segments).filter(s=>s.from===v.toId);
+        if(next.length>0){
+          const ns=next[Math.floor(Math.random()*next.length)];
+          const sc=getScale();
+          const fi=nd.intersections[ns.from],ti=nd.intersections[ns.to];
+          if(fi&&ti){
+            vehicles.push({
+              x:(fi.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2,
+              z:(sc.maxLat-fi.lat)/sc.latR*sc.scale-sc.scale/2,
+              tx:(ti.lon-sc.minLon)/sc.lonR*sc.scale-sc.scale/2,
+              tz:(sc.maxLat-ti.lat)/sc.latR*sc.scale-sc.scale/2,
+              progress:0,speed:0.005+Math.random()*0.008,
+              fromId:ns.from,toId:ns.to,
+              emergency:v.emergency
+            });
+          }
+        }
+      }
+      continue;
+    }
+    v.x=v.x+(v.tx-v.x)*v.speed*2;
+    v.z=v.z+(v.tz-v.z)*v.speed*2;
+  }
+}
+
+// Traffic light phases
+const intersectionPhases={};
+
+// SSE
+function connect(){
+  if(es)es.close();
+  es=new EventSource(`${API}/api/events/stream`);
+  es.onopen=()=>{document.getElementById('sd').className='dot on';document.getElementById('st').textContent='ONLINE'};
+  es.onerror=()=>{document.getElementById('sd').className='dot off';document.getElementById('st').textContent='OFFLINE'};
+  ['thinking','decision','conflict','coordination','metrics','simulation_step','simulation_end'].forEach(t=>{
+    es.addEventListener(t,e=>onEvent(JSON.parse(e.data)));
+  });
+  es.addEventListener('keepalive',()=>{});
+}
+
+function onEvent(ev){
+  if(ev.event_type==='decision'&&ev.agent_id){
+    intersectionPhases[ev.agent_id]=ev.data.decision?.phase;
+  }
+  if(ev.event_type==='simulation_step'){
+    step=ev.data.step||0;
+    document.getElementById('s5').textContent=step;
+    if(step%2===0)spawnVehicle();
+  }
+  if(ev.event_type==='simulation_step'||ev.event_type==='simulation_end')fetchMetrics();
+  addFeed(ev);
+}
+
+function addFeed(ev){
+  const fl=document.getElementById('fl');
+  const el=document.createElement('div');
+  const cls=ev.event_type==='thinking'?'tk':ev.event_type==='decision'?'dc':ev.event_type==='conflict'?'cf':'';
+  el.className='fi '+cls;
+  const ts=new Date(ev.timestamp*1000).toLocaleTimeString();
+  let d=ev.data.thought?.substring(0,50)||ev.data.decision?`phase=${ev.data.decision?.phase}`:'';
+  el.innerHTML=`<span class="ts">${ts}</span> <span class="ag">${ev.agent_id||''}</span> ${d}`;
+  fl.prepend(el);
+  if(fl.children.length>40)fl.lastChild.remove();
+}
+
+async function fetchMetrics(){
+  try{
+    const r=await fetch(`${API}/api/events/metrics`);
+    const m=await r.json();
+    document.getElementById('s1').textContent=m.total_events||0;
+    document.getElementById('s2').textContent=m.total_decisions||0;
+    document.getElementById('s3').textContent=m.total_conflicts||0;
+    document.getElementById('s4').textContent=(m.avg_decision_ms||0)+'ms';
+  }catch{}
+}
+
+async function loadNetwork(){
+  try{
+    const r=await fetch(`${API}/api/network`);
+    nd=await r.json();_sc=null;
+  }catch{}
+}
+
+window.go=async()=>{
+  const p=document.getElementById('ps').value||null;
+  try{
+    const url=p?`${API}/api/simulation/start?steps=200&speed=3&preset=${p}`:`${API}/api/simulation/start?steps=200&speed=3`;
+    await fetch(url,{method:'POST'});
+    document.getElementById('bGo').style.display='none';
+    document.getElementById('bStop').style.display='block';
+    running=true;
+    setTimeout(loadNetwork,300);
+  }catch(e){alert(e)}
+};
+
+window.stop=async()=>{
+  try{await fetch(`${API}/api/simulation/stop`,{method:'POST'});
+  document.getElementById('bGo').style.display='block';
+  document.getElementById('bStop').style.display='none';
+  running=false;}catch{}
+};
+
+// Init
+loadNetwork();connect();render();setInterval(fetchMetrics,3000);
+// Spawn initial vehicles
+for(let i=0;i<8;i++)setTimeout(spawnVehicle,i*200);
+</script>
+</body>
+</html>
