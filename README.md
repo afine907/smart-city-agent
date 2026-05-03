@@ -111,6 +111,21 @@ docker build -t traffic-agent .
 docker run -p 8080:8080 -e LONGCAT_API_KEY="your-key" traffic-agent
 ```
 
+### Kubernetes 部署
+
+```bash
+# 一键部署（需要 kubectl + 集群）
+export LONGCAT_API_KEY="your-key"
+bash k8s/deploy.sh
+
+# 或手动部署
+kubectl apply -k k8s/
+
+# 查看状态
+kubectl -n traffic-agent get pods
+kubectl -n traffic-agent port-forward svc/traffic-agent 8080:80
+```
+
 ## 🏗️ 系统架构
 
 ```
@@ -221,6 +236,7 @@ smart-city-agent/
 │   ├── visualization/       # SSE 事件 + Dashboard
 │   ├── tools/               # Agent 工具（观察、通信、紧急）
 │   └── cli.py               # CLI 入口
+├── k8s/                    # Kubernetes 部署
 ├── tests/                   # 164 个测试
 ├── docs/                    # 设计文档
 ├── examples/                # 示例脚本

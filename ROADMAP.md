@@ -89,9 +89,9 @@
 - [x] 两个预设路网（Manhattan + Wuhan 光谷）
 - [x] CLI + Dashboard 支持 OSM 仿真
 
-### 3.2 部署方案 ⏳
+### 3.2 部署方案 ✅
 - [x] Docker 容器化
-- [ ] Kubernetes 编排
+- [x] Kubernetes 编排（Kustomize + deploy.sh）
 - [ ] 监控告警
 - [ ] 灰度发布
 
