@@ -1,36 +1,59 @@
 """
-Simulation Runner — Ties GridSimulation + EventCollector for SSE visualization.
+Simulation Runner — Ties Simulation + EventCollector for SSE visualization.
+
+Supports both GridSimulation and OSMSimulation.
 """
 
 import time
+from typing import Union
 
 from traffic_agent.simulation.engine import SimulationConfig
 from traffic_agent.simulation.grid import GridSimulation
+from traffic_agent.simulation.osm_sim import OSMSimulation
 from traffic_agent.visualization.events import EventCollector, EventType, SSEEvent
 
 
 class SimulationRunner:
-    """Runs GridSimulation with SSE event emission."""
+    """Runs a traffic simulation with SSE event emission."""
 
     def __init__(
         self,
         config: SimulationConfig | None = None,
         collector: EventCollector | None = None,
+        simulation: Union[GridSimulation, OSMSimulation, None] = None,
+        preset: str | None = None,
     ):
         self.config = config or SimulationConfig()
         self.collector = collector or EventCollector()
-        self.simulation: GridSimulation | None = None
+        self.simulation = simulation
+        self.preset = preset
         self._running = False
 
     def setup(self) -> None:
         """Initialize the simulation."""
-        self.simulation = GridSimulation(config=self.config)
+        if self.simulation is None:
+            if self.preset:
+                self.simulation = OSMSimulation.from_preset(
+                    self.preset, config=self.config
+                )
+            else:
+                self.simulation = GridSimulation(config=self.config)
+
+        # Determine network info
+        n_ix = len(self.simulation.intersections)
+        sim_type = type(self.simulation).__name__
+
         self.collector.emit(
             SSEEvent(
                 event_type=EventType.SIMULATION_START,
                 agent_id="system",
                 timestamp=time.time(),
-                data={"grid_size": "3x3", "config": {"max_steps": self.config.max_steps}},
+                data={
+                    "simulation_type": sim_type,
+                    "num_intersections": n_ix,
+                    "preset": self.preset or "grid_3x3",
+                    "config": {"max_steps": self.config.max_steps},
+                },
             )
         )
 

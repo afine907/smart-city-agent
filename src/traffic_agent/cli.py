@@ -89,14 +89,20 @@ def run_simulate(args) -> None:
     def run_sim():
         import time
         time.sleep(2)  # Wait for server to start
-        runner = SimulationRunner(collector=collector)
+        runner = SimulationRunner(
+            collector=collector,
+            config=SimulationConfig(seed=42),
+            preset=args.preset,
+        )
         runner.run(steps=args.steps)
 
     # Start simulation in background thread
     t = threading.Thread(target=run_sim, daemon=True)
     t.start()
 
+    preset_info = f" (preset: {args.preset})" if args.preset else " (3x3 grid)"
     print(f"🚦 Starting simulation with SSE at http://0.0.0.0:{args.port}")
+    print(f"   Network: {preset_info}")
     print(f"   Steps: {args.steps}, Speed: {args.speed}x")
     print(f"   Open http://localhost:{args.port} in your browser")
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="info")
@@ -325,6 +331,51 @@ def _print_scenario_result(result) -> None:
             print(f"   {key}: {value}")
 
 
+def run_osm(args) -> None:
+    """Run OSM network simulation with quick stats."""
+    from traffic_agent.simulation.osm_sim import OSMSimulation
+    from traffic_agent.simulation.engine import SimulationConfig
+
+    config = SimulationConfig(
+        dt=1.0,
+        seed=args.seed,
+        arrival_rate=args.arrival_rate,
+    )
+    sim = OSMSimulation.from_preset(args.preset, config=config)
+
+    n_ix = len(sim.intersections)
+    n_seg = len(sim.segments)
+    n_boundary = len(sim.boundary_intersections)
+
+    print(f"🚦 OSM Simulation: {args.preset}")
+    print(f"   Intersections: {n_ix}")
+    print(f"   Road segments: {n_seg}")
+    print(f"   Boundary nodes: {n_boundary}")
+    print(f"   Steps: {args.steps}")
+    print()
+
+    for step in range(args.steps):
+        sim.step()
+        if step % 50 == 0:
+            m = sim.get_metrics()
+            print(
+                f"  Step {step:4d} | "
+                f"Q: {m['total_queue']:3.0f} | "
+                f"Gen: {m['vehicles_generated']:3.0f} | "
+                f"Done: {m['vehicles_completed']:3.0f} | "
+                f"Wait: {m['avg_wait_time']:.1f}s"
+            )
+
+    print()
+    m = sim.get_metrics()
+    print("📊 Final Metrics:")
+    for k, v in m.items():
+        if isinstance(v, float):
+            print(f"  {k}: {v:.2f}")
+        else:
+            print(f"  {k}: {v}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="LLM Traffic Controller — AI-Powered Traffic Signal Control"
@@ -362,6 +413,12 @@ def main():
     sim_parser.add_argument("--steps", type=int, default=100, help="Simulation steps")
     sim_parser.add_argument("--speed", type=float, default=1.0, help="Simulation speed multiplier")
     sim_parser.add_argument("--port", type=int, default=8080, help="Dashboard server port")
+    sim_parser.add_argument(
+        "--preset",
+        choices=["manhattan", "wuhan"],
+        default=None,
+        help="OSM preset network (default: 3x3 grid)",
+    )
     sim_parser.set_defaults(func=run_simulate)
 
     # Scenario command
@@ -372,6 +429,18 @@ def main():
                                  help="Run mode: compare (both), llm only, fixed only")
     scenario_parser.add_argument("--seed", type=int, default=42, help="Random seed")
     scenario_parser.set_defaults(func=run_scenario)
+
+    # OSM command — quick OSM network simulation
+    osm_parser = subparsers.add_parser("osm", help="Run OSM network simulation")
+    osm_parser.add_argument(
+        "preset",
+        choices=["manhattan", "wuhan"],
+        help="OSM preset network",
+    )
+    osm_parser.add_argument("--steps", type=int, default=200, help="Simulation steps")
+    osm_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    osm_parser.add_argument("--arrival-rate", type=float, default=0.5, help="Vehicle arrival rate")
+    osm_parser.set_defaults(func=run_osm)
 
     args = parser.parse_args()
     
