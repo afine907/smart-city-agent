@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traffic-agent
+  namespace: traffic-agent
+  labels:
+    app: traffic-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traffic-agent
+  template:
+    metadata:
+      labels:
+        app: traffic-agent
+    spec:
+      containers:
+        - name: traffic-agent
+          image: traffic-agent:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: traffic-agent-config
+            - secretRef:
+                name: traffic-agent-secrets
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
