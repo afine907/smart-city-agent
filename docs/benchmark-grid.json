@@ -1,0 +1,81 @@
+{
+  "results": [
+    {
+      "name": "fixed_timing",
+      "steps": 200,
+      "duration_seconds": 0.07584261894226074,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 18,
+        "total_waiting": 0,
+        "vehicles_generated": 815,
+        "vehicles_completed": 0,
+        "avg_wait_time": 0.0,
+        "throughput": 0.0
+      },
+      "avg_wait_time": 0.0,
+      "p50_wait_time": 0.0,
+      "p95_wait_time": 0.0,
+      "p99_wait_time": 0.0,
+      "max_wait_time": 0.0,
+      "avg_queue": 27.435,
+      "max_queue": 40.0,
+      "throughput": 0.0,
+      "vehicles_generated": 815,
+      "vehicles_completed": 0
+    },
+    {
+      "name": "adaptive_rules",
+      "steps": 200,
+      "duration_seconds": 0.0808417797088623,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 18,
+        "total_waiting": 0,
+        "vehicles_generated": 815,
+        "vehicles_completed": 0,
+        "avg_wait_time": 0.0,
+        "throughput": 0.0
+      },
+      "avg_wait_time": 0.0,
+      "p50_wait_time": 0.0,
+      "p95_wait_time": 0.0,
+      "p99_wait_time": 0.0,
+      "max_wait_time": 0.0,
+      "avg_queue": 27.435,
+      "max_queue": 40.0,
+      "throughput": 0.0,
+      "vehicles_generated": 815,
+      "vehicles_completed": 0
+    },
+    {
+      "name": "random",
+      "steps": 200,
+      "duration_seconds": 0.10731887817382812,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 29,
+        "total_waiting": 0,
+        "vehicles_generated": 801,
+        "vehicles_completed": 0,
+        "avg_wait_time": 0.0,
+        "throughput": 0.0
+      },
+      "avg_wait_time": 0.0,
+      "p50_wait_time": 0.0,
+      "p95_wait_time": 0.0,
+      "p99_wait_time": 0.0,
+      "max_wait_time": 0.0,
+      "avg_queue": 27.68,
+      "max_queue": 36.0,
+      "throughput": 0.0,
+      "vehicles_generated": 801,
+      "vehicles_completed": 0
+    }
+  ],
+  "config": {
+    "steps": 200,
+    "seed": 42,
+    "preset": null
+  }
+}

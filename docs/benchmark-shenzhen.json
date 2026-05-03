@@ -1,0 +1,87 @@
+{
+  "results": [
+    {
+      "name": "fixed_timing",
+      "steps": 200,
+      "duration_seconds": 0.10318827629089355,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 1642,
+        "total_waiting": 30,
+        "vehicles_generated": 770,
+        "vehicles_completed": 730,
+        "avg_wait_time": 6.3780821917808215,
+        "throughput": 3.65,
+        "num_intersections": 9,
+        "num_segments": 13
+      },
+      "avg_wait_time": 2.89196635017093,
+      "p50_wait_time": 2.6643016113237783,
+      "p95_wait_time": 6.4187864913196515,
+      "p99_wait_time": 6.441984170880741,
+      "max_wait_time": 6.45925925925926,
+      "avg_queue": 839.88,
+      "max_queue": 2175.0,
+      "throughput": 3.65,
+      "vehicles_generated": 770,
+      "vehicles_completed": 730
+    },
+    {
+      "name": "adaptive_rules",
+      "steps": 200,
+      "duration_seconds": 0.2089989185333252,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 6456,
+        "total_waiting": 4578,
+        "vehicles_generated": 809,
+        "vehicles_completed": 1039,
+        "avg_wait_time": 48.53512993262753,
+        "throughput": 5.195,
+        "num_intersections": 9,
+        "num_segments": 13
+      },
+      "avg_wait_time": 8.961675670499881,
+      "p50_wait_time": 6.711355427567357,
+      "p95_wait_time": 20.54709656059448,
+      "p99_wait_time": 41.591489361702095,
+      "max_wait_time": 48.53512993262753,
+      "avg_queue": 1361.155,
+      "max_queue": 6456.0,
+      "throughput": 5.195,
+      "vehicles_generated": 809,
+      "vehicles_completed": 1039
+    },
+    {
+      "name": "random",
+      "steps": 200,
+      "duration_seconds": 0.11409759521484375,
+      "final_metrics": {
+        "time": 200.0,
+        "total_queue": 1740,
+        "total_waiting": 69,
+        "vehicles_generated": 788,
+        "vehicles_completed": 169,
+        "avg_wait_time": 17.28994082840237,
+        "throughput": 0.845,
+        "num_intersections": 9,
+        "num_segments": 13
+      },
+      "avg_wait_time": 6.397230557418887,
+      "p50_wait_time": 4.6762897620956965,
+      "p95_wait_time": 15.660183291676127,
+      "p99_wait_time": 17.0379498146564,
+      "max_wait_time": 17.28994082840237,
+      "avg_queue": 783.38,
+      "max_queue": 1779.0,
+      "throughput": 0.845,
+      "vehicles_generated": 788,
+      "vehicles_completed": 169
+    }
+  ],
+  "config": {
+    "steps": 200,
+    "seed": 42,
+    "preset": "shenzhen"
+  }
+}

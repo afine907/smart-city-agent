@@ -411,6 +411,52 @@ def run_osm(args) -> None:
             print(f"  {k}: {v}")
 
 
+def run_benchmark(args) -> None:
+    """Run quality benchmark comparing fixed/adaptive/random strategies."""
+    from traffic_agent.comparison.quality_benchmark import (
+        run_fixed_benchmark,
+        run_adaptive_benchmark,
+        run_random_benchmark,
+        generate_report,
+        save_report,
+    )
+
+    preset = args.preset
+    steps = args.steps
+    seed = args.seed
+
+    print(f"🏁 Running benchmark: {steps} steps, seed={seed}")
+    if preset:
+        print(f"   Network: {preset.upper()}")
+    else:
+        print(f"   Network: 3×3 Grid")
+    print()
+
+    # Run all three strategies
+    print("  [1/3] Fixed timing...")
+    fixed = run_fixed_benchmark(preset, steps, seed)
+
+    print("  [2/3] Adaptive rules...")
+    adaptive = run_adaptive_benchmark(preset, steps, seed)
+
+    print("  [3/3] Random baseline...")
+    random_ = run_random_benchmark(preset, steps, seed)
+
+    results = [fixed, adaptive, random_]
+
+    # Generate and print report
+    report = generate_report(results, preset)
+    print(report)
+
+    # Save if requested
+    if args.output:
+        save_report(results, args.output, {"steps": steps, "seed": seed, "preset": preset})
+    else:
+        # Auto-save to docs/
+        output_path = f"docs/benchmark-{preset or 'grid'}.json"
+        save_report(results, output_path, {"steps": steps, "seed": seed, "preset": preset})
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="LLM Traffic Controller — AI-Powered Traffic Signal Control"
@@ -476,6 +522,19 @@ def main():
     osm_parser.add_argument("--seed", type=int, default=42, help="Random seed")
     osm_parser.add_argument("--arrival-rate", type=float, default=0.5, help="Vehicle arrival rate")
     osm_parser.set_defaults(func=run_osm)
+
+    # Benchmark command — quality comparison
+    bench_parser = subparsers.add_parser("benchmark", help="Run quality benchmark (fixed vs adaptive vs random)")
+    bench_parser.add_argument("--steps", type=int, default=200, help="Simulation steps")
+    bench_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    bench_parser.add_argument(
+        "--preset",
+        choices=["manhattan", "wuhan", "shenzhen"],
+        default=None,
+        help="OSM preset (default: 3x3 grid)",
+    )
+    bench_parser.add_argument("--output", type=str, default=None, help="Save JSON report to file")
+    bench_parser.set_defaults(func=run_benchmark)
 
     args = parser.parse_args()
     
