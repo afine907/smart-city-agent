@@ -82,9 +82,44 @@ def run_simulate(args) -> None:
     import uvicorn
     import threading
     from traffic_agent.api.sse_server import app, get_collector
+    import traffic_agent.api.sse_server as srv
     from traffic_agent.visualization.runner import SimulationRunner
 
     collector = get_collector()
+
+    # Pre-populate network topology for the dashboard
+    if args.preset:
+        from traffic_agent.simulation.osm import OSMNetwork
+        from traffic_agent.simulation.osm_sim import OSMSimulation
+        preset_map = {"manhattan": "SMALL_MANHATTAN", "wuhan": "WUHAN_OPTICS_VALLEY", "shenzhen": "SHENZHEN_LIUXIANDONG"}
+        preset_data = getattr(__import__("traffic_agent.simulation.osm", fromlist=[preset_map[args.preset]]), preset_map[args.preset])
+        osm = OSMNetwork.from_dict(preset_data)
+        sim_temp = OSMSimulation(osm, SimulationConfig(seed=42))
+        srv._network_topology = {
+            "type": f"osm_{args.preset}",
+            "intersections": {
+                ix_id: {
+                    "lat": sim_temp.osm.intersections[ix_id].lat,
+                    "lon": sim_temp.osm.intersections[ix_id].lon,
+                    "neighbors": sim_temp.get_neighbors(ix_id),
+                }
+                for ix_id in sim_temp.intersections
+            },
+            "segments": {
+                sid: {"from": s.from_id, "to": s.to_id, "length": s.length, "name": s.name}
+                for sid, s in sim_temp.segments.items()
+                if not sid.startswith("virtual_")
+            },
+        }
+    else:
+        srv._network_topology = {
+            "type": "grid_3x3",
+            "intersections": {
+                f"ix_{r}_{c}": {"row": r, "col": c}
+                for r in range(3) for c in range(3)
+            },
+            "segments": {},
+        }
 
     def run_sim():
         import time

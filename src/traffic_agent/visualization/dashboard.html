@@ -28,12 +28,23 @@
   .main { display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
   .grid-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
   .grid-panel h3 { font-size: 14px; margin-bottom: 12px; color: var(--text-dim); }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .network-canvas { width: 100%; min-height: 300px; position: relative; }
+  .grid-layout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .intersection { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; text-align: center; transition: all 0.3s; }
   .intersection.thinking { border-color: var(--accent); box-shadow: 0 0 8px rgba(88,166,255,0.3); }
   .intersection .id { font-size: 11px; color: var(--text-dim); }
   .intersection .phase { font-size: 24px; margin: 4px 0; }
   .intersection .queue { font-size: 13px; color: var(--text-dim); }
+  /* SVG network graph */
+  .svg-network { width: 100%; height: 350px; }
+  .svg-network .road { stroke: #30363d; stroke-width: 3; fill: none; }
+  .svg-network .road-label { fill: #8b949e; font-size: 10px; }
+  .svg-network .node { cursor: pointer; transition: all 0.3s; }
+  .svg-network .node circle { fill: #161b22; stroke: #30363d; stroke-width: 2; transition: all 0.3s; }
+  .svg-network .node.thinking circle { stroke: var(--accent); filter: drop-shadow(0 0 6px rgba(88,166,255,0.5)); }
+  .svg-network .node-label { fill: #8b949e; font-size: 10px; text-anchor: middle; }
+  .svg-network .node-phase { font-size: 16px; text-anchor: middle; }
+  .svg-network .node-queue { fill: #8b949e; font-size: 9px; text-anchor: middle; }
   .timeline { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; flex: 1; overflow: hidden; }
   .timeline h3 { font-size: 14px; margin-bottom: 12px; color: var(--text-dim); }
   .timeline-bars { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; max-height: 200px; }
@@ -54,7 +65,8 @@
   .event .agent { font-weight: 600; }
   .controls { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
   .controls h3 { font-size: 14px; margin-bottom: 12px; color: var(--text-dim); }
-  .controls button { width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600; margin-bottom: 8px; transition: opacity 0.2s; }
+  .controls select, .controls button { width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 14px; margin-bottom: 8px; background: var(--bg); color: var(--text); }
+  .controls button { font-weight: 600; border: none; transition: opacity 0.2s; }
   .controls button:hover { opacity: 0.85; }
   .btn-start { background: var(--green); color: #000; }
   .btn-stop { background: var(--red); color: #fff; }
@@ -74,12 +86,21 @@
     <div class="metric-card"><div class="label">Avg Decision (ms)</div><div class="value yellow" id="mAvgMs">0</div></div>
   </div>
   <div class="main">
-    <div class="grid-panel"><h3>3×3 INTERSECTION GRID</h3><div class="grid" id="grid"></div></div>
+    <div class="grid-panel">
+      <h3 id="networkTitle">NETWORK</h3>
+      <div id="networkContainer"></div>
+    </div>
     <div class="timeline"><h3>DECISION TIMELINE</h3><div class="timeline-bars" id="timeline"></div></div>
   </div>
   <div class="sidebar">
     <div class="controls">
       <h3>SIMULATION CONTROL</h3>
+      <select id="presetSelect">
+        <option value="">3×3 Grid (default)</option>
+        <option value="manhattan">🗽 Manhattan</option>
+        <option value="wuhan">🏙️ Wuhan Optics Valley</option>
+        <option value="shenzhen">💼 Shenzhen Liuxiandong</option>
+      </select>
       <button class="btn-start" id="btnStart" onclick="startSim()">▶ Start (50 steps)</button>
       <button class="btn-stop" id="btnStop" onclick="stopSim()" style="display:none">■ Stop</button>
       <button class="btn-clear" onclick="clearEvents()">🗑 Clear Feed</button>
@@ -90,23 +111,116 @@
 <script>
 const API = window.location.origin;
 let es = null;
+let networkData = null;
 const state = { intersections: {}, events: [], metrics: {} };
 
-// Initialize 3x3 grid
-function initGrid() {
-  const grid = document.getElementById('grid');
-  grid.innerHTML = '';
+// Fetch network topology and render
+async function loadNetwork() {
+  try {
+    const r = await fetch(`${API}/api/network`);
+    networkData = await r.json();
+    renderNetwork();
+  } catch {
+    // Fallback to 3x3 grid
+    renderGrid();
+  }
+}
+
+function renderNetwork() {
+  const container = document.getElementById('networkContainer');
+  const title = document.getElementById('networkTitle');
+
+  if (!networkData || !networkData.intersections) {
+    renderGrid();
+    return;
+  }
+
+  const ix = networkData.intersections;
+  const ids = Object.keys(ix);
+  const isOSM = networkData.type && networkData.type.startsWith('osm_');
+
+  title.textContent = isOSM
+    ? `NETWORK: ${networkData.type.replace('osm_', '').toUpperCase()} (${ids.length} intersections)`
+    : `3×3 INTERSECTION GRID`;
+
+  if (!isOSM) {
+    renderGrid();
+    return;
+  }
+
+  // SVG-based network graph for OSM
+  const latitudes = ids.map(id => ix[id].lat).filter(l => l);
+  const longitudes = ids.map(id => ix[id].lon).filter(l => l);
+
+  if (latitudes.length === 0) {
+    renderGrid();
+    return;
+  }
+
+  const minLat = Math.min(...latitudes), maxLat = Math.max(...latitudes);
+  const minLon = Math.min(...longitudes), maxLon = Math.max(...longitudes);
+  const latRange = maxLat - minLat || 0.001;
+  const lonRange = maxLon - minLon || 0.001;
+
+  const W = 700, H = 340, PAD = 50;
+
+  function proj(lat, lon) {
+    const x = PAD + ((lon - minLon) / lonRange) * (W - 2 * PAD);
+    const y = PAD + ((maxLat - lat) / latRange) * (H - 2 * PAD);
+    return [x, y];
+  }
+
+  let svg = `<svg class="svg-network" viewBox="0 0 ${W} ${H}">`;
+
+  // Draw roads
+  const segs = networkData.segments || {};
+  for (const [sid, seg] of Object.entries(segs)) {
+    const from = ix[seg.from], to = ix[seg.to];
+    if (!from || !to || !from.lat || !to.lat) continue;
+    const [x1, y1] = proj(from.lat, from.lon);
+    const [x2, y2] = proj(to.lat, to.lon);
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    svg += `<line class="road" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+    if (seg.name) {
+      svg += `<text class="road-label" x="${mx}" y="${my - 6}" text-anchor="middle">${seg.name}</text>`;
+    }
+  }
+
+  // Draw intersections
+  for (const [id, data] of Object.entries(ix)) {
+    if (!data.lat || !data.lon) continue;
+    const [cx, cy] = proj(data.lat, data.lon);
+    svg += `<g class="node" id="node-${id}" data-id="${id}">`;
+    svg += `<circle cx="${cx}" cy="${cy}" r="20"/>`;
+    svg += `<text class="node-phase" x="${cx}" y="${cy + 5}" id="phase-${id}">🟢</text>`;
+    svg += `<text class="node-label" x="${cx}" y="${cy - 26}">${id}</text>`;
+    svg += `<text class="node-queue" x="${cx}" y="${cy + 34}" id="queue-${id}">q:0</text>`;
+    svg += `</g>`;
+  }
+
+  svg += '</svg>';
+  container.innerHTML = svg;
+}
+
+function renderGrid() {
+  const container = document.getElementById('networkContainer');
+  const title = document.getElementById('networkTitle');
+  title.textContent = '3×3 INTERSECTION GRID';
+
+  let html = '<div class="grid-layout">';
   for (let r = 0; r < 3; r++) {
     for (let c = 0; c < 3; c++) {
       const id = `ix_${r}_${c}`;
       state.intersections[id] = { phase: '🟢', queue: 0 };
-      const el = document.createElement('div');
-      el.className = 'intersection';
-      el.id = `ix-${id}`;
-      el.innerHTML = `<div class="id">${id}</div><div class="phase" id="phase-${id}">🟢</div><div class="queue" id="queue-${id}">queue: 0</div>`;
-      grid.appendChild(el);
+      html += `<div class="intersection" id="ix-${id}">
+        <div class="id">${id}</div>
+        <div class="phase" id="phase-${id}">🟢</div>
+        <div class="queue" id="queue-${id}">queue: 0</div>
+      </div>`;
     }
   }
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 function connect() {
@@ -130,31 +244,48 @@ function handleEvent(ev) {
   state.events.push(ev);
   if (state.events.length > 500) state.events.shift();
 
-  // Update intersection visuals
-  if (ev.agent_id && ev.agent_id.startsWith('ix_')) {
-    const el = document.getElementById(`ix-${ev.agent_id}`);
+  const aid = ev.agent_id || '';
+
+  // Update intersection visuals (grid or SVG)
+  if (aid.startsWith('ix_') || (networkData && networkData.intersections && aid in networkData.intersections)) {
+    // Grid cell
+    const el = document.getElementById(`ix-${aid}`);
     if (el) {
       if (ev.event_type === 'thinking') {
         el.classList.add('thinking');
         setTimeout(() => el.classList.remove('thinking'), 1500);
       }
-      if (ev.event_type === 'decision' && ev.data.decision) {
-        const phase = ev.data.decision.phase;
-        const phaseEl = document.getElementById(`phase-${ev.agent_id}`);
-        if (phaseEl && phase !== undefined) phaseEl.textContent = phase === 0 ? '🟢' : phase === 1 ? '🔴' : '🟡';
+    }
+    // SVG node
+    const node = document.getElementById(`node-${aid}`);
+    if (node) {
+      if (ev.event_type === 'thinking') {
+        node.classList.add('thinking');
+        setTimeout(() => node.classList.remove('thinking'), 1500);
       }
+    }
+    // Phase
+    if (ev.event_type === 'decision' && ev.data.decision) {
+      const phase = ev.data.decision.phase;
+      const phaseEl = document.getElementById(`phase-${aid}`);
+      if (phaseEl) {
+        const icon = phase === 0 ? '🟢' : phase === 1 ? '🔴' : '🟡';
+        phaseEl.textContent = icon;
+      }
+    }
+    // Queue
+    if (ev.data && ev.data.queue !== undefined) {
+      const qEl = document.getElementById(`queue-${aid}`);
+      if (qEl) qEl.textContent = `q:${ev.data.queue}`;
     }
   }
 
-  // Add to feed
   addEventToFeed(ev);
 
-  // Update metrics
   if (ev.event_type === 'simulation_step' || ev.event_type === 'simulation_end') {
     fetchMetrics();
   }
 
-  // Timeline
   if (ev.event_type === 'decision' && ev.duration_ms) {
     addTimelineBar(ev.agent_id, ev.duration_ms);
   }
@@ -199,10 +330,16 @@ async function fetchMetrics() {
 }
 
 async function startSim() {
+  const preset = document.getElementById('presetSelect').value || null;
   try {
-    await fetch(`${API}/api/simulation/start?steps=50&speed=2`, { method: 'POST' });
+    const url = preset
+      ? `${API}/api/simulation/start?steps=50&speed=2&preset=${preset}`
+      : `${API}/api/simulation/start?steps=50&speed=2`;
+    await fetch(url, { method: 'POST' });
     document.getElementById('btnStart').style.display = 'none';
     document.getElementById('btnStop').style.display = 'block';
+    // Reload network after simulation starts
+    setTimeout(loadNetwork, 500);
   } catch (e) { alert('Failed to start: ' + e.message); }
 }
 
@@ -219,7 +356,7 @@ function clearEvents() {
   document.getElementById('timeline').innerHTML = '';
 }
 
-initGrid();
+loadNetwork();
 connect();
 setInterval(fetchMetrics, 5000);
 </script>

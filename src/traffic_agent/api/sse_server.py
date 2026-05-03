@@ -32,6 +32,7 @@ app.add_middleware(
 _collector = EventCollector()
 _simulation_running = False
 _simulation_task: asyncio.Task | None = None
+_network_topology: dict = {}  # Current network topology for dashboard
 
 
 def get_collector() -> EventCollector:
@@ -106,7 +107,7 @@ async def event_metrics():
 
 
 @app.post("/api/simulation/start")
-async def start_simulation(steps: int = 50, speed: float = 1.0):
+async def start_simulation(steps: int = 50, speed: float = 1.0, preset: str | None = None):
     """Start a simulation run."""
     global _simulation_running, _simulation_task
 
@@ -116,8 +117,8 @@ async def start_simulation(steps: int = 50, speed: float = 1.0):
     _simulation_running = True
     _collector.clear()
 
-    _simulation_task = asyncio.create_task(_run_simulation(steps, speed))
-    return {"status": "started", "steps": steps, "speed": speed}
+    _simulation_task = asyncio.create_task(_run_simulation(steps, speed, preset))
+    return {"status": "started", "steps": steps, "speed": speed, "preset": preset}
 
 
 @app.post("/api/simulation/stop")
@@ -146,23 +147,75 @@ async def simulation_status():
     }
 
 
-async def _run_simulation(steps: int, speed: float):
+@app.get("/api/network")
+async def get_network():
+    """Get current network topology for dashboard rendering."""
+    return _network_topology
+
+
+async def _run_simulation(steps: int, speed: float, preset: str | None = None):
     """Run simulation with event emission."""
-    global _simulation_running
+    global _simulation_running, _network_topology
 
     try:
         from traffic_agent.simulation.engine import SimulationConfig
-        from traffic_agent.simulation.grid import GridSimulation
 
         config = SimulationConfig(max_steps=steps * 10)
-        sim = GridSimulation(config=config)
+
+        # Auto-detect from existing topology if no preset specified
+        if not preset and _network_topology.get("type", "").startswith("osm_"):
+            preset = _network_topology["type"].replace("osm_", "")
+
+        if preset:
+            from traffic_agent.simulation.osm_sim import OSMSimulation
+            sim = OSMSimulation.from_preset(preset, config)
+            net_type = f"osm_{preset}"
+        else:
+            from traffic_agent.simulation.grid import GridSimulation
+            sim = GridSimulation(config=config)
+            net_type = "grid_3x3"
+
+        # Export network topology for dashboard
+        if hasattr(sim, 'intersections') and hasattr(sim, 'segments'):
+            # OSM simulation
+            _network_topology = {
+                "type": net_type,
+                "intersections": {
+                    ix_id: {
+                        "lat": sim.osm.intersections[ix_id].lat if ix_id in sim.osm.intersections else 0,
+                        "lon": sim.osm.intersections[ix_id].lon if ix_id in sim.osm.intersections else 0,
+                        "neighbors": sim.get_neighbors(ix_id),
+                    }
+                    for ix_id in sim.intersections
+                },
+                "segments": {
+                    seg_id: {
+                    "from": seg.from_id,
+                    "to": seg.to_id,
+                    "length": seg.length,
+                    "name": seg.name,
+                }
+                for seg_id, seg in sim.segments.items()
+                if not seg_id.startswith("virtual_")
+            },
+            }
+        else:
+            # Grid simulation
+            _network_topology = {
+                "type": net_type,
+                "intersections": {
+                    ix_id: {"row": int(ix_id.split("_")[1]), "col": int(ix_id.split("_")[2])}
+                    for ix_id in sim.intersections
+                },
+                "segments": {},
+            }
 
         _collector.emit(
             SSEEvent(
                 event_type=EventType.SIMULATION_START,
                 agent_id="system",
                 timestamp=time.time(),
-                data={"steps": steps, "grid_size": "3x3"},
+                data={"steps": steps, "network": net_type},
             )
         )
 
