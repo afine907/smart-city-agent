@@ -182,20 +182,17 @@ class GridSimulation:
     def step(self) -> None:
         """Advance simulation by one time step."""
         dt = self.config.dt
-        
+
         # 1. Generate vehicles at boundaries
         self._generate_boundary_vehicles(dt)
-        
-        # 2. Move vehicles through segments
+
+        # 2. Move vehicles through segments (includes intersection routing)
         self._move_vehicles(dt)
-        
-        # 3. Process intersections (vehicles entering/exiting)
-        self._process_intersections(dt)
-        
-        # 4. Update signal timers
+
+        # 3. Update signal timers
         for ix in self.intersections.values():
             ix.phase_timer += dt
-        
+
         self.time += dt
         self.step_count += 1
     
@@ -299,51 +296,61 @@ class GridSimulation:
                 self.segments[seg_key].vehicles.append(vehicle)
     
     def _move_vehicles(self, dt: float) -> None:
-        """Move vehicles through road segments."""
+        """Move vehicles through road segments, routing at intersections."""
         for seg_key, seg in self.segments.items():
             to_remove = []
-            
+
             for i, v in enumerate(seg.vehicles):
-                # Check if vehicle should stop at intersection
-                at_intersection = v.position <= 5.0
-                
-                if at_intersection:
-                    # Check if destination intersection has green
+                # Vehicle is at the intersection (position <= 5.0)
+                if v.position <= 5.0:
                     to_ix = self.intersections.get(seg.to_id)
                     if to_ix:
                         has_green = self._has_green(to_ix, v.approach)
                         if not has_green:
+                            # Red light — wait
                             v.speed = 0
                             v.waiting = True
                             self.total_wait_time += dt
                             continue
-                
-                # Move forward
+                        else:
+                            # Green light — route through intersection
+                            next_seg = self._route_vehicle(seg.to_id, v)
+                            if next_seg is None:
+                                self.total_vehicles_completed += 1
+                            to_remove.append(i)
+                            continue
+
+                # Check if vehicle will cross the intersection this step
+                new_pos = v.position - seg.speed_limit * dt
+                if v.position > 5.0 and new_pos <= 5.0:
+                    to_ix = self.intersections.get(seg.to_id)
+                    if to_ix:
+                        has_green = self._has_green(to_ix, v.approach)
+                        if not has_green:
+                            # Stop at intersection boundary
+                            v.position = 5.0
+                            v.speed = 0
+                            v.waiting = True
+                            self.total_wait_time += dt
+                            continue
+                        else:
+                            # Route through intersection
+                            next_seg = self._route_vehicle(seg.to_id, v)
+                            if next_seg is None:
+                                self.total_vehicles_completed += 1
+                            to_remove.append(i)
+                            continue
+
+                # Move forward normally
                 v.speed = seg.speed_limit
                 v.waiting = False
                 v.position -= v.speed * dt
-                
-                # Vehicle reached end of segment
+
                 if v.position <= -5.0:
                     to_remove.append(i)
-            
-            # Remove vehicles that reached the end
+
             for i in sorted(to_remove, reverse=True):
                 seg.vehicles.pop(i)
-    
-    def _process_intersections(self, dt: float) -> None:
-        """Process vehicles at intersections."""
-        for ix_id, ix in self.intersections.items():
-            # Count vehicles that passed through
-            for seg_key, seg in self.segments.items():
-                if seg.to_id == ix_id:
-                    # Vehicles arriving at this intersection
-                    arriving = [v for v in seg.vehicles if v.position <= 5.0]
-                    for v in arriving:
-                        # Route to next segment or count as completed
-                        next_seg = self._route_vehicle(ix_id, v)
-                        if next_seg is None:
-                            self.total_vehicles_completed += 1
     
     def _route_vehicle(self, from_id: str, vehicle: Vehicle) -> Optional[str]:
         """Route vehicle to next segment. Returns segment key or None if completed."""

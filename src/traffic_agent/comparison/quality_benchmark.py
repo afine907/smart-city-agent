@@ -163,6 +163,85 @@ def run_random_benchmark(preset: str | None, steps: int, seed: int) -> Dict[str,
     return _run_simulation(sim, "random", RandomStrategy(), steps)
 
 
+def run_llm_benchmark(
+    preset: str | None,
+    steps: int,
+    seed: int,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    model: str = "LongCat-Flash-Chat",
+) -> Dict[str, Any]:
+    """Run LLM agent benchmark using LongCat API."""
+    from traffic_agent.llm.client import LLMClient, LLMConfig
+    from traffic_agent.crew.traffic_crew import CrewConfig, TrafficControlCrew
+
+    config = SimulationConfig(seed=seed, arrival_rate=0.5)
+    sim = OSMSimulation.from_preset(preset, config) if preset else GridSimulation(config=config)
+
+    intersection_ids = list(sim.intersections.keys())
+    graph = sim.get_graph() if hasattr(sim, "get_graph") else {
+        ix_id: sim.get_neighbors(ix_id)
+        for ix_id in sim.intersections
+    }
+
+    llm_config = LLMConfig(
+        fast_model=model,
+        api_key=api_key,
+        api_base=api_base,
+    )
+    crew_config = CrewConfig(
+        llm=llm_config,
+        decision_interval=5.0,
+        enable_coordination=True,
+        use_cache=True,
+        verbose=False,
+    )
+
+    crew = TrafficControlCrew(intersection_ids, graph, crew_config)
+
+    start_time = time.time()
+    wait_times = []
+    queue_lengths = []
+
+    for step in range(steps):
+        sim.step()
+
+        # LLM agents decide every 5 steps
+        if step % 5 == 0:
+            crew.step(sim)
+
+        metrics = sim.get_metrics()
+        queue_lengths.append(metrics["total_queue"])
+        wait_times.append(metrics["avg_wait_time"])
+
+    elapsed = time.time() - start_time
+    final_metrics = sim.get_metrics()
+    crew_metrics = crew.get_metrics()
+
+    wait_arr = np.array(wait_times) if wait_times else np.array([0])
+    queue_arr = np.array(queue_lengths) if queue_lengths else np.array([0])
+
+    return {
+        "name": f"llm_{model}",
+        "steps": steps,
+        "duration_seconds": elapsed,
+        "final_metrics": final_metrics,
+        "avg_wait_time": float(np.mean(wait_arr)),
+        "p50_wait_time": float(np.percentile(wait_arr, 50)),
+        "p95_wait_time": float(np.percentile(wait_arr, 95)),
+        "p99_wait_time": float(np.percentile(wait_arr, 99)),
+        "max_wait_time": float(np.max(wait_arr)),
+        "avg_queue": float(np.mean(queue_arr)),
+        "max_queue": float(np.max(queue_arr)),
+        "throughput": final_metrics.get("throughput", 0),
+        "vehicles_generated": final_metrics.get("vehicles_generated", 0),
+        "vehicles_completed": final_metrics.get("vehicles_completed", 0),
+        "llm_calls": crew_metrics["total_llm_calls"],
+        "cache_hit_rate": crew_metrics["cache_hit_rate"],
+        "llm_cost": crew_metrics["llm_stats"]["total_cost"],
+    }
+
+
 # ─── Report Generation ─────────────────────────────────────────────
 
 

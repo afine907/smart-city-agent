@@ -112,6 +112,11 @@ canvas#queueChart{width:200px;height:150px;border-radius:4px}
       <button class="btn stop" id="bStop" onclick="stopSim()" style="display:none">■ Stop</button>
       <button class="btn" onclick="clearFeed()">🗑</button>
     </div>
+    <h3 style="margin-top:10px">Quick Actions</h3>
+    <div>
+      <button class="btn" onclick="spawnEmergency()" style="border-color:#ff3366;color:#ff3366">🚑 Emergency</button>
+      <button class="btn" onclick="startDemo()" style="border-color:#bc8cff;color:#bc8cff">🎬 Demo</button>
+    </div>
   </div>
 </div>
 
@@ -628,38 +633,6 @@ function drawIntersection(id, ix) {
   }
 }
 
-function drawVehicle(v) {
-  const seg = segments[v.segId];
-  if (!seg) return;
-
-  const t = v.reverse ? 1 - v.t : v.t;
-  const x = seg.x1 + (seg.x2 - seg.x1) * t;
-  const y = seg.y1 + (seg.y2 - seg.y1) * t;
-
-  // Direction for car orientation
-  const dx = seg.x2 - seg.x1;
-  const dy = seg.y2 - seg.y1;
-  const angle = Math.atan2(dy, dx) + (v.reverse ? Math.PI : 0);
-
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(angle);
-
-  // Vehicle body (small rectangle)
-  const vw = 10, vh = 5;
-  ctx.fillStyle = v.color;
-  ctx.shadowColor = v.color;
-  ctx.shadowBlur = 6;
-  ctx.fillRect(-vw/2, -vh/2, vw, vh);
-  ctx.shadowBlur = 0;
-
-  // Headlight
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(vw/2 - 1, -1.5, 2, 3);
-
-  ctx.restore();
-}
-
 // ============================================================
 // QUEUE CHART (small canvas)
 // ============================================================
@@ -752,6 +725,163 @@ async function stopSim() {
     document.getElementById('bGo').style.display = 'inline-block';
     document.getElementById('bStop').style.display = 'none';
   } catch {}
+}
+
+// ============================================================
+// EMERGENCY VEHICLE
+// ============================================================
+function spawnEmergency() {
+  const segIds = Object.keys(segments);
+  if (!segIds.length) return;
+
+  // Pick a random segment and spawn an emergency vehicle
+  const sid = segIds[Math.floor(Math.random() * segIds.length)];
+  const seg = segments[sid];
+
+  const ev = {
+    id: `ev_${Date.now()}`,
+    segId: sid,
+    t: 0,
+    speed: 0.008,  // Faster than normal
+    color: '#ff3366',
+    reverse: Math.random() > 0.5,
+    from: seg.from,
+    to: seg.to,
+    emergency: true,
+  };
+  ev.from = ev.reverse ? seg.to : seg.from;
+  ev.to = ev.reverse ? seg.from : seg.to;
+  vehicles.push(ev);
+
+  // Flash all intersections red briefly
+  for (const [id, ix] of Object.entries(intersections)) {
+    ix._emergencyFlash = Date.now();
+  }
+
+  addFeedItem({
+    event_type: 'decision',
+    agent_id: 'system',
+    timestamp: Date.now() / 1000,
+    data: { decision: { phase: 'EMERGENCY' }, message: '🚑 Emergency vehicle dispatched!' },
+  });
+
+  document.getElementById('s1').textContent = vehicles.length;
+}
+
+function drawVehicle(v) {
+  const seg = segments[v.segId];
+  if (!seg) return;
+
+  const t = v.reverse ? 1 - v.t : v.t;
+  const x = seg.x1 + (seg.x2 - seg.x1) * t;
+  const y = seg.y1 + (seg.y2 - seg.y1) * t;
+
+  const dx = seg.x2 - seg.x1;
+  const dy = seg.y2 - seg.y1;
+  const angle = Math.atan2(dy, dx) + (v.reverse ? Math.PI : 0);
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  if (v.emergency) {
+    // Emergency vehicle — larger, pulsing glow
+    const pulse = Math.sin(Date.now() / 150) * 0.3 + 0.7;
+    ctx.shadowColor = '#ff3366';
+    ctx.shadowBlur = 15 * pulse;
+    ctx.fillStyle = '#ff3366';
+    ctx.fillRect(-7, -4, 14, 8);
+
+    // Siren lights (alternating blue/red)
+    const sirenPhase = Math.floor(Date.now() / 200) % 2;
+    ctx.fillStyle = sirenPhase === 0 ? '#4488ff' : '#ff3366';
+    ctx.beginPath();
+    ctx.arc(-4, -5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = sirenPhase === 0 ? '#ff3366' : '#4488ff';
+    ctx.beginPath();
+    ctx.arc(4, -5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  } else {
+    // Normal vehicle
+    const vw = 10, vh = 5;
+    ctx.fillStyle = v.color;
+    ctx.shadowColor = v.color;
+    ctx.shadowBlur = 6;
+    ctx.fillRect(-vw/2, -vh/2, vw, vh);
+    ctx.shadowBlur = 0;
+
+    // Headlight
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(vw/2 - 1, -1.5, 2, 3);
+  }
+
+  ctx.restore();
+}
+
+// ============================================================
+// DEMO MODE
+// ============================================================
+let demoInterval = null;
+
+function startDemo() {
+  if (demoInterval) {
+    clearInterval(demoInterval);
+    demoInterval = null;
+    addFeedItem({
+      event_type: 'decision',
+      agent_id: 'system',
+      timestamp: Date.now() / 1000,
+      data: { message: '🎬 Demo stopped' },
+    });
+    return;
+  }
+
+  addFeedItem({
+    event_type: 'decision',
+    agent_id: 'system',
+    timestamp: Date.now() / 1000,
+    data: { message: '🎬 Demo mode started — watching the traffic neural network' },
+  });
+
+  // Simulate a busy intersection scenario
+  let step = 0;
+  demoInterval = setInterval(() => {
+    step++;
+
+    // Spawn vehicles
+    spawnVehicles();
+
+    // Randomly update intersection queues
+    for (const [id, ix] of Object.entries(intersections)) {
+      ix.queue = Math.floor(Math.random() * 15);
+      if (step % 3 === 0) {
+        ix.phase = Math.random() > 0.5 ? 0 : 1;  // Toggle NS/EW
+        ix._thinkTime = Date.now();
+      }
+    }
+
+    // Every 10 steps, spawn an emergency vehicle
+    if (step % 10 === 0) {
+      spawnEmergency();
+    }
+
+    // Update metrics display
+    document.getElementById('s2').textContent = step * Object.keys(intersections).length;
+    document.getElementById('s5').textContent = step;
+
+    if (step >= 50) {
+      clearInterval(demoInterval);
+      demoInterval = null;
+      addFeedItem({
+        event_type: 'decision',
+        agent_id: 'system',
+        timestamp: Date.now() / 1000,
+        data: { message: '🎬 Demo complete — 50 steps simulated' },
+      });
+    }
+  }, 200);
 }
 
 // ============================================================

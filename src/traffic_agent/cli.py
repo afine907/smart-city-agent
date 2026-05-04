@@ -412,11 +412,12 @@ def run_osm(args) -> None:
 
 
 def run_benchmark(args) -> None:
-    """Run quality benchmark comparing fixed/adaptive/random strategies."""
+    """Run quality benchmark comparing fixed/adaptive/random/LLM strategies."""
     from traffic_agent.comparison.quality_benchmark import (
         run_fixed_benchmark,
         run_adaptive_benchmark,
         run_random_benchmark,
+        run_llm_benchmark,
         generate_report,
         save_report,
     )
@@ -430,19 +431,39 @@ def run_benchmark(args) -> None:
         print(f"   Network: {preset.upper()}")
     else:
         print(f"   Network: 3×3 Grid")
+    if args.llm:
+        print(f"   LLM Model: {args.model}")
     print()
 
-    # Run all three strategies
-    print("  [1/3] Fixed timing...")
+    # Run baseline strategies
+    print("  [1/4] Fixed timing...")
     fixed = run_fixed_benchmark(preset, steps, seed)
 
-    print("  [2/3] Adaptive rules...")
+    print("  [2/4] Adaptive rules...")
     adaptive = run_adaptive_benchmark(preset, steps, seed)
 
-    print("  [3/3] Random baseline...")
+    print("  [3/4] Random baseline...")
     random_ = run_random_benchmark(preset, steps, seed)
 
     results = [fixed, adaptive, random_]
+
+    # Run LLM benchmark if requested
+    if args.llm:
+        print(f"  [4/4] LLM agents ({args.model})...")
+        try:
+            llm = run_llm_benchmark(
+                preset, steps, seed,
+                api_key=args.api_key,
+                api_base=args.api_base,
+                model=args.model,
+            )
+            results.append(llm)
+            print(f"        LLM calls: {llm['llm_calls']}, Cost: ${llm['llm_cost']:.4f}")
+        except Exception as e:
+            print(f"  ⚠️  LLM benchmark failed: {e}")
+            print("  Continuing with baseline results only...")
+    else:
+        print("  [4/4] LLM agents... (skipped, use --llm to enable)")
 
     # Generate and print report
     report = generate_report(results, preset)
@@ -450,11 +471,11 @@ def run_benchmark(args) -> None:
 
     # Save if requested
     if args.output:
-        save_report(results, args.output, {"steps": steps, "seed": seed, "preset": preset})
+        save_report(results, args.output, {"steps": steps, "seed": seed, "preset": preset, "llm": args.llm})
     else:
         # Auto-save to docs/
         output_path = f"docs/benchmark-{preset or 'grid'}.json"
-        save_report(results, output_path, {"steps": steps, "seed": seed, "preset": preset})
+        save_report(results, output_path, {"steps": steps, "seed": seed, "preset": preset, "llm": args.llm})
 
 
 def main():
@@ -534,6 +555,10 @@ def main():
         help="OSM preset (default: 3x3 grid)",
     )
     bench_parser.add_argument("--output", type=str, default=None, help="Save JSON report to file")
+    bench_parser.add_argument("--llm", action="store_true", help="Include LLM agent benchmark (requires API key)")
+    bench_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model name")
+    bench_parser.add_argument("--api-key", default=None, help="LLM API key (or set OPENAI_API_KEY)")
+    bench_parser.add_argument("--api-base", default=None, help="LLM API base URL")
     bench_parser.set_defaults(func=run_benchmark)
 
     args = parser.parse_args()
