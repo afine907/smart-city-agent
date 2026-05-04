@@ -80,6 +80,12 @@ async def serve_dashboard_city():
     return _serve_html("dashboard_3d_city.html", "3D City")
 
 
+@app.get("/dashboard/map", response_class=HTMLResponse)
+async def serve_dashboard_map():
+    """Serve the map-based dashboard with real OSM tiles."""
+    return _serve_html("dashboard_map.html", "Map Dashboard")
+
+
 @app.get("/dashboard/classic", response_class=HTMLResponse)
 async def serve_dashboard_classic():
     """Serve the classic SVG dashboard."""

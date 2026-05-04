@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚦 City Traffic AI — Map Dashboard</title>
+
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Leaflet Animated Marker -->
+<script src="https://cdn.jsdelivr.net/npm/leaflet.marker.slideto@0.3.0/Leaflet.Marker.SlideTo.js"></script>
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a12;color:#e0e0e0;font-family:'SF Pro Display','Inter',system-ui,sans-serif;overflow:hidden}
+
+/* Map container */
+#map{position:fixed;inset:0;z-index:1}
+
+/* Leaflet overrides for dark theme */
+.leaflet-tile-pane{filter:brightness(0.7) contrast(1.2) saturate(0.3) hue-rotate(180deg)}
+.leaflet-control-zoom a{background:rgba(12,12,22,.9)!important;color:#aaa!important;border:1px solid #1a1a2e!important}
+.leaflet-control-zoom a:hover{color:#00d4ff!important;border-color:#00d4ff!important}
+.leaflet-control-attribution{display:none!important}
+
+/* Top HUD */
+.hud-top{position:fixed;top:0;left:0;right:0;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(10,10,18,.95) 60%,transparent);z-index:1000;pointer-events:none}
+.hud-top *{pointer-events:auto}
+.logo{display:flex;align-items:center;gap:12px}
+.logo h1{font-size:16px;font-weight:700;letter-spacing:2px;background:linear-gradient(135deg,#00d4ff,#00ff88);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.logo .tag{font-size:9px;color:#555;letter-spacing:1px;border:1px solid #222;padding:2px 8px;border-radius:4px}
+.status-pill{display:flex;align-items:center;gap:10px;padding:6px 16px;border-radius:24px;background:rgba(15,15,25,.9);border:1px solid #1a1a2e}
+.dot{width:8px;height:8px;border-radius:50%;transition:.3s}
+.dot.on{background:#00ff88;box-shadow:0 0 12px #00ff88}
+.dot.off{background:#ff3366}
+.dot.sim{background:#ffcc00;box-shadow:0 0 12px #ffcc00;animation:pulse 1.2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.status-text{font-size:11px;font-weight:600;letter-spacing:1px}
+
+/* KPI Cards */
+.kpi-row{position:fixed;top:64px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:1000}
+.kpi{background:rgba(12,12,22,.92);border:1px solid #1a1a2e;border-radius:12px;padding:10px 18px;backdrop-filter:blur(16px);min-width:110px;text-align:center;transition:.3s}
+.kpi:hover{border-color:#00d4ff30;transform:translateY(-1px)}
+.kpi .label{font-size:8px;color:#555;text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
+.kpi .value{font-size:22px;font-weight:800;margin-top:2px;font-variant-numeric:tabular-nums}
+.kpi .unit{font-size:9px;color:#555;margin-top:1px}
+.c-cyan{color:#00d4ff}.c-green{color:#00ff88}.c-yellow{color:#ffcc00}.c-red{color:#ff3366}.c-purple{color:#bc8cff}
+
+/* Left Panel — Decision Log */
+.panel-left{position:fixed;top:120px;left:14px;width:260px;z-index:1000}
+.panel{background:rgba(12,12,22,.92);border:1px solid #1a1a2e;border-radius:12px;padding:12px;backdrop-filter:blur(16px);max-height:50vh;overflow-y:auto}
+.panel::-webkit-scrollbar{width:3px}.panel::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
+.panel h3{font-size:8px;color:#555;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;font-weight:600}
+.log-entry{padding:5px 7px;border-radius:5px;font-size:10px;margin-bottom:3px;border-left:2px solid;animation:slideIn .3s}
+@keyframes slideIn{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:translateX(0)}}
+.log-entry.think{border-color:#00d4ff;background:rgba(0,212,255,.03)}
+.log-entry.decide{border-color:#00ff88;background:rgba(0,255,136,.03)}
+.log-entry.alert{border-color:#ff3366;background:rgba(255,51,102,.03)}
+.log-ts{color:#444;margin-right:4px;font-variant-numeric:tabular-nums;font-size:9px}
+.log-agent{color:#00d4ff;font-weight:700}
+
+/* Right Panel — Intersection Detail */
+.panel-right{position:fixed;top:120px;right:14px;width:280px;z-index:1000}
+.ix-detail{display:none}
+.ix-detail.show{display:block}
+.ix-header{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.ix-name{font-size:14px;font-weight:700;color:#00d4ff}
+.ix-badge{font-size:8px;padding:2px 6px;border-radius:4px;background:rgba(0,255,136,.1);color:#00ff88;border:1px solid rgba(0,255,136,.2)}
+.ix-phase{display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(20,20,35,.8);border-radius:8px;margin-bottom:6px}
+.ix-phase .light{width:16px;height:16px;border-radius:50%;flex-shrink:0}
+.ix-phase .light.green{background:#00ff88;box-shadow:0 0 16px #00ff88}
+.ix-phase .light.red{background:#ff3366;box-shadow:0 0 16px #ff3366}
+.ix-phase .light.yellow{background:#ffcc00;box-shadow:0 0 16px #ffcc00}
+.ix-phase .name{font-size:11px;color:#aaa;flex:1}
+.ix-phase .timer{font-size:11px;color:#666;font-variant-numeric:tabular-nums}
+.ix-queues{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+.ix-q{background:rgba(20,20,35,.8);border-radius:8px;padding:8px;text-align:center}
+.ix-q .dir{font-size:8px;color:#555;text-transform:uppercase;letter-spacing:1px}
+.ix-q .count{font-size:18px;font-weight:800;margin-top:2px}
+.ix-llm{margin-top:8px;padding:8px;background:rgba(0,212,255,.03);border:1px solid rgba(0,212,255,.1);border-radius:8px}
+.ix-llm h4{font-size:8px;color:#00d4ff;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.ix-llm .decision{font-size:11px;color:#aaa}
+.ix-llm .reason{font-size:10px;color:#666;margin-top:4px;font-style:italic}
+
+/* Bottom Bar */
+.bottom-bar{position:fixed;bottom:0;left:0;right:0;padding:10px 20px;display:flex;align-items:center;gap:12px;background:linear-gradient(0deg,rgba(10,10,18,.95) 50%,transparent);z-index:1000}
+.ctrl-group{display:flex;gap:6px;align-items:center}
+.btn{padding:6px 14px;border:1px solid #222;border-radius:8px;background:transparent;color:#aaa;font-size:10px;font-family:inherit;cursor:pointer;transition:.2s;letter-spacing:.5px}
+.btn:hover{border-color:#00d4ff;color:#00d4ff}
+.btn.go{background:linear-gradient(135deg,#00ff88,#00cc6a);color:#000;border:none;font-weight:700}
+.btn.go:hover{filter:brightness(1.1)}
+.btn.stop{background:#ff3366;color:#fff;border:none}
+.btn.emg{border-color:#ff3366;color:#ff3366}
+.btn.emg:hover{background:rgba(255,51,102,.15)}
+select{padding:6px 10px;border:1px solid #222;border-radius:8px;background:#0f0f1a;color:#aaa;font-size:10px;font-family:inherit;cursor:pointer}
+select:focus{outline:none;border-color:#00d4ff}
+.timeline{flex:1;height:4px;background:#1a1a2e;border-radius:2px;position:relative}
+.tl-fill{height:100%;background:linear-gradient(90deg,#00d4ff,#00ff88);border-radius:2px;transition:width .3s}
+.tl-label{font-size:10px;color:#555;font-variant-numeric:tabular-nums;min-width:80px}
+
+/* Legend */
+.legend{position:fixed;bottom:50px;right:14px;background:rgba(12,12,22,.92);border:1px solid #1a1a2e;border-radius:10px;padding:10px 14px;z-index:1000;backdrop-filter:blur(16px)}
+.legend h4{font-size:8px;color:#555;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px}
+.legend-row{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:10px;color:#888}
+.legend-dot{width:10px;height:3px;border-radius:1px;flex-shrink:0}
+
+/* Map overlay effects */
+.leaflet-overlay-pane svg{pointer-events:none}
+.leaflet-popup-content-wrapper{background:rgba(12,12,22,.95)!important;border:1px solid #1a1a2e!important;border-radius:10px!important;color:#ccc!important;backdrop-filter:blur(16px)}
+.leaflet-popup-tip{background:rgba(12,12,22,.95)!important}
+.leaflet-popup-content{font-family:'SF Pro Display','Inter',system-ui,sans-serif!important;font-size:11px!important}
+
+/* Heatmap glow effect on roads */
+.road-overlay{pointer-events:none}
+
+/* Vehicle marker */
+.vehicle-marker{transition:transform 0.5s linear}
+.vehicle-dot{width:8px;height:8px;border-radius:50%;border:1px solid rgba(255,255,255,.3);box-shadow:0 0 6px currentColor}
+.vehicle-dot.emergency{width:10px;height:10px;animation:siren 0.3s infinite alternate}
+@keyframes siren{from{background:#ff3366;box-shadow:0 0 10px #ff3366}to{background:#4488ff;box-shadow:0 0 10px #4488ff}}
+
+/* Intersection marker */
+.intersection-marker{cursor:pointer}
+.intersection-icon{width:24px;height:24px;border-radius:50%;border:2px solid;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;transition:.3s;position:relative}
+.intersection-icon::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid;opacity:0;transition:.3s}
+.intersection-marker:hover .intersection-icon::after{opacity:0.3}
+.intersection-icon.green{background:rgba(0,255,136,.2);border-color:#00ff88;color:#00ff88}
+.intersection-icon.green::after{border-color:#00ff88}
+.intersection-icon.red{background:rgba(255,51,102,.2);border-color:#ff3366;color:#ff3366}
+.intersection-icon.red::after{border-color:#ff3366}
+.intersection-icon.yellow{background:rgba(255,204,0,.2);border-color:#ffcc00;color:#ffcc00}
+.intersection-icon.yellow::after{border-color:#ffcc00}
+
+/* Pulse animation for active intersections */
+.intersection-icon.pulse::before{content:'';position:absolute;inset:-8px;border-radius:50%;border:1px solid;animation:ixPulse 2s infinite}
+.intersection-icon.green.pulse::before{border-color:#00ff88}
+.intersection-icon.red.pulse::before{border-color:#ff3366}
+@keyframes ixPulse{0%{transform:scale(1);opacity:.4}100%{transform:scale(2);opacity:0}}
+
+/* Loading */
+.loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#0a0a12;z-index:2000}
+.loading h2{font-size:18px;font-weight:700;letter-spacing:3px;background:linear-gradient(135deg,#00d4ff,#00ff88);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:12px}
+.loading .bar{width:200px;height:3px;background:#1a1a2e;border-radius:2px;overflow:hidden}
+.loading .bar-fill{width:0%;height:100%;background:linear-gradient(90deg,#00d4ff,#00ff88);border-radius:2px;transition:width .3s}
+.loading .status{font-size:10px;color:#555;margin-top:8px;letter-spacing:1px}
+</style>
+</head>
+<body>
+
+<div class="loading" id="loadingScreen">
+  <h2>🚦 INITIALIZING CITY AI</h2>
+  <div class="bar"><div class="bar-fill" id="loadBar"></div></div>
+  <div class="status" id="loadStatus">Loading map...</div>
+</div>
+
+<!-- Top HUD -->
+<div class="hud-top">
+  <div class="logo">
+    <h1>🚦 CITY TRAFFIC AI</h1>
+    <span class="tag">LLM-POWERED · REAL-TIME</span>
+  </div>
+  <div class="status-pill">
+    <div class="dot off" id="statusDot"></div>
+    <span class="status-text" id="statusText">IDLE</span>
+  </div>
+</div>
+
+<!-- KPI Row -->
+<div class="kpi-row">
+  <div class="kpi"><div class="label">Active Vehicles</div><div class="value c-cyan" id="kpiVehicles">0</div></div>
+  <div class="kpi"><div class="label">Throughput</div><div class="value c-green" id="kpiThroughput">0</div><div class="unit">veh/min</div></div>
+  <div class="kpi"><div class="label">Avg Wait</div><div class="value c-yellow" id="kpiWait">0s</div></div>
+  <div class="kpi"><div class="label">Efficiency</div><div class="value c-purple" id="kpiEfficiency">0%</div></div>
+  <div class="kpi"><div class="label">LLM Decisions</div><div class="value c-cyan" id="kpiLLM">0</div></div>
+</div>
+
+<!-- Left Panel -->
+<div class="panel-left">
+  <div class="panel" id="logPanel">
+    <h3>🧠 AI Decision Stream</h3>
+    <div id="logList"></div>
+  </div>
+</div>
+
+<!-- Right Panel -->
+<div class="panel-right">
+  <div class="panel ix-detail" id="ixDetail">
+    <div class="ix-header">
+      <span class="ix-name" id="ixName">—</span>
+      <span class="ix-badge" id="ixBadge">IDLE</span>
+    </div>
+    <div class="ix-phase">
+      <div class="light red" id="ixLight"></div>
+      <span class="name" id="ixPhaseName">—</span>
+      <span class="timer" id="ixPhaseTimer">—</span>
+    </div>
+    <div class="ix-queues" id="ixQueues"></div>
+    <div class="ix-llm" id="ixLLM">
+      <h4>🧠 LLM Decision</h4>
+      <div class="decision" id="ixDecision">—</div>
+      <div class="reason" id="ixReason"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Legend -->
+<div class="legend">
+  <h4>Traffic Density</h4>
+  <div class="legend-row"><div class="legend-dot" style="background:#00ff88"></div> Free flow</div>
+  <div class="legend-row"><div class="legend-dot" style="background:#ffcc00"></div> Moderate</div>
+  <div class="legend-row"><div class="legend-dot" style="background:#ff3366"></div> Congested</div>
+  <div class="legend-row"><div class="legend-dot" style="background:#ff3366;animation:siren .3s infinite alternate"></div> Emergency</div>
+</div>
+
+<!-- Bottom Bar -->
+<div class="bottom-bar">
+  <span class="tl-label" id="tlStep">Step 0</span>
+  <div class="timeline"><div class="tl-fill" id="tlFill" style="width:0%"></div></div>
+  <div class="ctrl-group">
+    <select id="presetSelect">
+      <option value="shenzhen">🇨🇳 深圳 · 西丽留仙洞</option>
+      <option value="wuhan">🇨🇳 武汉 · 光谷广场</option>
+      <option value="manhattan">🇺🇸 纽约 · 时代广场</option>
+    </select>
+    <button class="btn go" id="btnStart" onclick="startSim()">▶ START</button>
+    <button class="btn stop" id="btnStop" onclick="stopSim()" style="display:none">■ STOP</button>
+    <button class="btn emg" onclick="spawnEmergency()">🚑 Emergency</button>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const API = window.location.origin;
+
+const PRESETS = {
+  shenzhen: { center: [22.5738, 113.9560], zoom: 15, name: '深圳 · 西丽留仙洞' },
+  wuhan:    { center: [30.5050, 114.4200], zoom: 15, name: '武汉 · 光谷广场' },
+  manhattan:{ center: [40.7580, -73.9855], zoom: 15, name: '纽约 · 时代广场' },
+};
+
+const ROAD_COLORS = {
+  free:    '#00ff88',
+  moderate:'#ffcc00',
+  heavy:   '#ff3366',
+  blocked: '#ff0033',
+};
+
+// ============================================================
+// STATE
+// ============================================================
+let map;
+let networkData = null;
+let roadLayers = {};      // segId -> polyline
+let intersectionMarkers = {}; // ixId -> marker
+let vehicleMarkers = {};  // vehicleId -> {marker, data}
+let simRunning = false;
+let simStep = 0;
+let totalSteps = 200;
+let currentPreset = 'shenzhen';
+let selectedIx = null;
+
+// Stats
+let stats = { completed: 0, waitTime: 0, llmCalls: 0, startTime: 0 };
+
+// Road traffic state (0-1 density per segment)
+let roadTraffic = {};
+
+// ============================================================
+// INIT MAP
+// ============================================================
+function initMap() {
+  const loadBar = document.getElementById('loadBar');
+  const loadStatus = document.getElementById('loadStatus');
+
+  loadBar.style.width = '20%';
+  loadStatus.textContent = 'Initializing map...';
+
+  const preset = PRESETS[currentPreset];
+
+  // Create map
+  map = L.map('map', {
+    center: preset.center,
+    zoom: preset.zoom,
+    zoomControl: false,
+    attributionControl: false,
+  });
+
+  // Dark tile layer (CartoDB dark matter)
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    subdomains: 'abcd',
+  }).addTo(map);
+
+  // Zoom control (top-right style)
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  loadBar.style.width = '40%';
+  loadStatus.textContent = 'Connecting to server...';
+
+  // Load network
+  fetchNetwork().then(() => {
+    loadBar.style.width = '100%';
+    loadStatus.textContent = 'Ready!';
+    setTimeout(() => {
+      document.getElementById('loadingScreen').style.opacity = '0';
+      setTimeout(() => document.getElementById('loadingScreen').style.display = 'none', 500);
+    }, 300);
+  });
+
+  // Listen for preset change
+  document.getElementById('presetSelect').addEventListener('change', (e) => {
+    currentPreset = e.target.value;
+    const p = PRESETS[currentPreset];
+    map.setView(p.center, p.zoom, { animate: true, duration: 1.5 });
+  });
+}
+
+// ============================================================
+// FETCH NETWORK
+// ============================================================
+async function fetchNetwork() {
+  try {
+    const resp = await fetch(`${API}/api/network`);
+    networkData = await resp.json();
+    if (networkData && networkData.intersections && Object.keys(networkData.intersections).length > 0) {
+      renderNetwork();
+    }
+  } catch (e) {
+    console.log('Network not available yet');
+  }
+}
+
+// ============================================================
+// RENDER NETWORK ON MAP
+// ============================================================
+function renderNetwork() {
+  if (!networkData) return;
+
+  // Clear existing
+  Object.values(roadLayers).forEach(l => map.removeLayer(l));
+  Object.values(intersectionMarkers).forEach(m => map.removeLayer(m));
+  roadLayers = {};
+  intersectionMarkers = {};
+
+  const intersections = networkData.intersections;
+  const segments = networkData.segments || {};
+  const isOSM = networkData.type && networkData.type.startsWith('osm_');
+
+  // Get coordinates as lat/lng
+  let coords = {};
+  for (const [id, ix] of Object.entries(intersections)) {
+    if (isOSM && ix.lat && ix.lon) {
+      coords[id] = [ix.lat, ix.lon];
+    } else {
+      // Grid fallback — convert row/col to lat/lng offset
+      const preset = PRESETS[currentPreset];
+      const row = ix.row || 0;
+      const col = ix.col || 0;
+      coords[id] = [
+        preset.center[0] + (row - 1) * 0.003,
+        preset.center[1] + (col - 1) * 0.003,
+      ];
+    }
+  }
+
+  // Draw road segments
+  for (const [segId, seg] of Object.entries(segments)) {
+    const from = coords[seg.from];
+    const to = coords[seg.to];
+    if (!from || !to) continue;
+
+    const traffic = roadTraffic[segId] || 0;
+    const color = getTrafficColor(traffic);
+    const weight = 4 + traffic * 4;
+
+    const polyline = L.polyline([from, to], {
+      color: color,
+      weight: weight,
+      opacity: 0.8,
+      smoothFactor: 1,
+      lineCap: 'round',
+    }).addTo(map);
+
+    // Glow effect (wider, more transparent line underneath)
+    const glow = L.polyline([from, to], {
+      color: color,
+      weight: weight + 6,
+      opacity: 0.15,
+      smoothFactor: 1,
+    }).addTo(map);
+
+    roadLayers[segId] = { polyline, glow, from, to };
+  }
+
+  // Draw intersections
+  for (const [id, c] of Object.entries(coords)) {
+    const marker = L.marker(c, {
+      icon: createIntersectionIcon(id, 'red'),
+      zIndexOffset: 1000,
+    }).addTo(map);
+
+    marker.on('click', () => selectIntersection(id));
+    intersectionMarkers[id] = marker;
+  }
+
+  // Fit bounds
+  const allCoords = Object.values(coords);
+  if (allCoords.length > 0) {
+    map.fitBounds(L.latLngBounds(allCoords).pad(0.3));
+  }
+}
+
+function createIntersectionIcon(id, state) {
+  const cls = `intersection-icon ${state}`;
+  return L.divIcon({
+    className: 'intersection-marker',
+    html: `<div class="${cls} pulse" title="${id}">●</div>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  });
+}
+
+function getTrafficColor(density) {
+  if (density < 0.3) return ROAD_COLORS.free;
+  if (density < 0.6) return ROAD_COLORS.moderate;
+  if (density < 0.85) return ROAD_COLORS.heavy;
+  return ROAD_COLORS.blocked;
+}
+
+// ============================================================
+// INTERACTION
+// ============================================================
+function selectIntersection(ixId) {
+  selectedIx = ixId;
+  const detail = document.getElementById('ixDetail');
+  detail.classList.add('show');
+
+  document.getElementById('ixName').textContent = ixId;
+  document.getElementById('ixBadge').textContent = 'ACTIVE';
+
+  // Update with current data
+  updateIntersectionDetail(ixId);
+
+  // Pan to intersection
+  const marker = intersectionMarkers[ixId];
+  if (marker) {
+    map.panTo(marker.getLatLng(), { animate: true, duration: 0.5 });
+  }
+}
+
+function updateIntersectionDetail(ixId) {
+  // This will be called with real data from SSE events
+  const phase = window._ixPhases?.[ixId] || 'N/A';
+  const queues = window._ixQueues?.[ixId] || {};
+
+  const isNS = phase.includes('NS');
+  const isEW = phase.includes('EW');
+  const isYellow = phase.includes('YELLOW');
+  const isRed = phase.includes('RED') || phase.includes('ALL');
+
+  const light = document.getElementById('ixLight');
+  light.className = 'light ' + (isYellow ? 'yellow' : isRed ? 'red' : 'green');
+
+  document.getElementById('ixPhaseName').textContent = phase;
+
+  // Queues
+  const dirs = ['N', 'E', 'S', 'W'];
+  const queueDiv = document.getElementById('ixQueues');
+  queueDiv.innerHTML = dirs.map(d => `
+    <div class="ix-q">
+      <div class="dir">${d}</div>
+      <div class="count c-${(queues[d] || 0) > 5 ? 'red' : (queues[d] || 0) > 2 ? 'yellow' : 'green'}">${queues[d] || 0}</div>
+    </div>
+  `).join('');
+}
+
+// ============================================================
+// SSE CONNECTION
+// ============================================================
+let es = null;
+
+function connectSSE() {
+  if (es) es.close();
+  es = new EventSource(`${API}/api/events/stream`);
+
+  es.onopen = () => {
+    document.getElementById('statusDot').className = 'dot on';
+    document.getElementById('statusText').textContent = 'CONNECTED';
+  };
+
+  es.onerror = () => {
+    document.getElementById('statusDot').className = 'dot off';
+    document.getElementById('statusText').textContent = 'OFFLINE';
+    es.close();
+    setTimeout(connectSSE, 3000);
+  };
+
+  ['thinking', 'decision', 'conflict', 'simulation_start', 'simulation_step', 'simulation_end']
+    .forEach(t => es.addEventListener(t, e => handleSSEEvent(JSON.parse(e.data))));
+}
+
+function handleSSEEvent(ev) {
+  const data = ev.data || {};
+
+  if (ev.event_type === 'decision' && data.decision) {
+    const phase = data.decision.phase;
+    const ixId = ev.agent_id;
+
+    // Store phase
+    if (!window._ixPhases) window._ixPhases = {};
+    window._ixPhases[ixId] = phase;
+
+    // Update intersection marker
+    const marker = intersectionMarkers[ixId];
+    if (marker) {
+      const isGreen = phase && !phase.includes('RED') && !phase.includes('YELLOW') && !phase.includes('ALL');
+      const isYellow = phase && phase.includes('YELLOW');
+      const state = isYellow ? 'yellow' : isGreen ? 'green' : 'red';
+      marker.setIcon(createIntersectionIcon(ixId, state));
+    }
+
+    // Update detail if selected
+    if (selectedIx === ixId) {
+      updateIntersectionDetail(ixId);
+      document.getElementById('ixDecision').textContent = `Switch to ${phase}`;
+    }
+
+    addLogEntry('decide', ixId, `→ ${phase}`);
+    stats.llmCalls++;
+  }
+
+  if (ev.event_type === 'thinking') {
+    addLogEntry('think', ev.agent_id, (data.thought || '').substring(0, 50));
+  }
+
+  if (ev.event_type === 'conflict') {
+    addLogEntry('alert', ev.agent_id, data.conflict_type || 'conflict');
+  }
+
+  if (ev.event_type === 'simulation_step') {
+    simStep = data.step || simStep + 1;
+    updateTimeline();
+
+    // Update road traffic randomly (in real app, server would send this)
+    updateRoadTraffic();
+  }
+
+  if (ev.event_type === 'simulation_end') {
+    stopSim();
+  }
+}
+
+// ============================================================
+// VEHICLES
+// ============================================================
+let vehicleCounter = 0;
+
+function spawnVehicle(isEmergency = false) {
+  if (!networkData || !networkData.intersections) return;
+
+  const ixIds = Object.keys(networkData.intersections);
+  if (ixIds.length < 2) return;
+
+  const fromId = ixIds[Math.floor(Math.random() * ixIds.length)];
+  // Pick a random neighbor
+  const fromIx = networkData.intersections[fromId];
+  const neighbors = fromIx.neighbors || [];
+  if (neighbors.length === 0) return;
+  const toId = neighbors[Math.floor(Math.random() * neighbors.length)];
+
+  const fromCoord = getIntersectionCoord(fromId);
+  const toCoord = getIntersectionCoord(toId);
+  if (!fromCoord || !toCoord) return;
+
+  const id = `v_${vehicleCounter++}`;
+  const color = isEmergency ? '#ff3366' : ['#00d4ff','#00ff88','#ffcc00','#bc8cff','#ff8844','#44ffdd'][Math.floor(Math.random() * 6)];
+
+  // Create marker
+  const icon = isEmergency
+    ? L.divIcon({
+        className: 'vehicle-marker',
+        html: `<div class="vehicle-dot emergency" style="color:${color}"></div>`,
+        iconSize: [10, 10],
+        iconAnchor: [5, 5],
+      })
+    : L.divIcon({
+        className: 'vehicle-marker',
+        html: `<div class="vehicle-dot" style="background:${color};color:${color}"></div>`,
+        iconSize: [8, 8],
+        iconAnchor: [4, 4],
+      });
+
+  const marker = L.marker(fromCoord, { icon, zIndexOffset: 500 }).addTo(map);
+
+  vehicleMarkers[id] = {
+    marker,
+    from: fromCoord,
+    to: toCoord,
+    t: 0,
+    speed: 0.008 + Math.random() * 0.012,
+    emergency: isEmergency,
+    color,
+  };
+}
+
+function updateVehicles() {
+  for (const [id, v] of Object.entries(vehicleMarkers)) {
+    v.t += v.speed;
+
+    if (v.t >= 1) {
+      // Reached destination — remove and respawn
+      map.removeLayer(v.marker);
+      delete vehicleMarkers[id];
+      stats.completed++;
+
+      // Respawn
+      if (simRunning) {
+        spawnVehicle(false);
+      }
+      continue;
+    }
+
+    // Interpolate position
+    const lat = v.from[0] + (v.to[0] - v.from[0]) * v.t;
+    const lng = v.from[1] + (v.to[1] - v.from[1]) * v.t;
+    v.marker.setLatLng([lat, lng]);
+
+    // Update road traffic
+    const segKey = findSegmentKey(v.from, v.to);
+    if (segKey) {
+      roadTraffic[segKey] = Math.min(1, (roadTraffic[segKey] || 0) + 0.01);
+    }
+  }
+
+  // Decay road traffic
+  for (const key in roadTraffic) {
+    roadTraffic[key] = Math.max(0, roadTraffic[key] - 0.005);
+    updateRoadColor(key);
+  }
+
+  // Update KPIs
+  updateKPIs();
+}
+
+function updateRoadColor(segKey) {
+  const road = roadLayers[segKey];
+  if (!road) return;
+  const density = roadTraffic[segKey] || 0;
+  const color = getTrafficColor(density);
+  const weight = 4 + density * 4;
+  road.polyline.setStyle({ color, weight });
+  road.glow.setStyle({ color, weight: weight + 6 });
+}
+
+function updateRoadTraffic() {
+  // Simulate random traffic bursts
+  const segKeys = Object.keys(roadLayers);
+  for (const key of segKeys) {
+    if (Math.random() < 0.1) {
+      roadTraffic[key] = Math.min(1, (roadTraffic[key] || 0) + Math.random() * 0.3);
+    }
+  }
+}
+
+function findSegmentKey(from, to) {
+  for (const [key, road] of Object.entries(roadLayers)) {
+    if ((road.from === from && road.to === to) || (road.from === to && road.to === from)) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function getIntersectionCoord(ixId) {
+  const ix = networkData?.intersections?.[ixId];
+  if (!ix) return null;
+  const isOSM = networkData.type && networkData.type.startsWith('osm_');
+  if (isOSM && ix.lat && ix.lon) return [ix.lat, ix.lon];
+  const preset = PRESETS[currentPreset];
+  return [preset.center[0] + ((ix.row || 0) - 1) * 0.003, preset.center[1] + ((ix.col || 0) - 1) * 0.003];
+}
+
+// ============================================================
+// EMERGENCY
+// ============================================================
+window.spawnEmergency = function() {
+  spawnVehicle(true);
+  addLogEntry('alert', 'system', '🚑 Emergency vehicle dispatched');
+
+  // Flash all intersections
+  for (const [id, marker] of Object.entries(intersectionMarkers)) {
+    marker.setIcon(createIntersectionIcon(id, 'yellow'));
+    setTimeout(() => {
+      if (intersectionMarkers[id]) {
+        marker.setIcon(createIntersectionIcon(id, 'red'));
+      }
+    }, 2000);
+  }
+};
+
+// ============================================================
+// UI HELPERS
+// ============================================================
+function addLogEntry(type, agent, message) {
+  const list = document.getElementById('logList');
+  const el = document.createElement('div');
+  el.className = `log-entry ${type}`;
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  el.innerHTML = `<span class="log-ts">${time}</span><span class="log-agent">${agent || 'sys'}</span> ${message}`;
+  list.prepend(el);
+  if (list.children.length > 50) list.lastChild.remove();
+}
+
+function updateTimeline() {
+  const pct = totalSteps > 0 ? (simStep / totalSteps * 100) : 0;
+  document.getElementById('tlFill').style.width = `${pct}%`;
+  document.getElementById('tlStep').textContent = `Step ${simStep}/${totalSteps}`;
+}
+
+function updateKPIs() {
+  const elapsed = stats.startTime > 0 ? (Date.now() - stats.startTime) / 1000 : 0;
+  const throughput = elapsed > 0 ? (stats.completed / elapsed * 60).toFixed(1) : '0';
+  const active = Object.keys(vehicleMarkers).length;
+
+  document.getElementById('kpiVehicles').textContent = active;
+  document.getElementById('kpiThroughput').textContent = throughput;
+  document.getElementById('kpiWait').textContent = (stats.completed > 0 ? (stats.waitTime / stats.completed).toFixed(1) : '0') + 's';
+  document.getElementById('kpiEfficiency').textContent = stats.completed > 0 ?
+    Math.min(100, Math.round(stats.completed / Math.max(1, stats.completed + active) * 100)) + '%' : '0%';
+  document.getElementById('kpiLLM').textContent = stats.llmCalls;
+}
+
+// ============================================================
+// SIMULATION CONTROL
+// ============================================================
+window.startSim = async function() {
+  currentPreset = document.getElementById('presetSelect').value;
+  totalSteps = 200;
+
+  try {
+    await fetch(`${API}/api/simulation/start?steps=${totalSteps}&speed=2&preset=${currentPreset}`, { method: 'POST' });
+  } catch (e) {
+    console.log('Server simulation start failed');
+  }
+
+  // Re-fetch network in case it changed
+  await fetchNetwork();
+
+  simRunning = true;
+  simStep = 0;
+  stats = { completed: 0, waitTime: 0, llmCalls: 0, startTime: Date.now() };
+  roadTraffic = {};
+
+  document.getElementById('statusDot').className = 'dot sim';
+  document.getElementById('statusText').textContent = 'SIMULATING';
+  document.getElementById('btnStart').style.display = 'none';
+  document.getElementById('btnStop').style.display = 'inline-block';
+
+  // Spawn initial vehicles
+  for (let i = 0; i < 20; i++) {
+    spawnVehicle(false);
+  }
+
+  // Spawn vehicles periodically
+  if (window._spawnInterval) clearInterval(window._spawnInterval);
+  window._spawnInterval = setInterval(() => {
+    if (!simRunning) return;
+    for (let i = 0; i < 3; i++) {
+      spawnVehicle(false);
+    }
+    if (Math.random() < 0.1) {
+      spawnVehicle(true);
+    }
+  }, 1000);
+
+  // Vehicle animation loop
+  if (window._vehicleLoop) clearInterval(window._vehicleLoop);
+  window._vehicleLoop = setInterval(() => {
+    if (simRunning) updateVehicles();
+  }, 50);
+};
+
+window.stopSim = async function() {
+  try { await fetch(`${API}/api/simulation/stop`, { method: 'POST' }); } catch {}
+  simRunning = false;
+  if (window._spawnInterval) clearInterval(window._spawnInterval);
+  if (window._vehicleLoop) clearInterval(window._vehicleLoop);
+
+  document.getElementById('statusDot').className = 'dot on';
+  document.getElementById('statusText').textContent = 'CONNECTED';
+  document.getElementById('btnStart').style.display = 'inline-block';
+  document.getElementById('btnStop').style.display = 'none';
+};
+
+// ============================================================
+// BOOT
+// ============================================================
+initMap();
+connectSSE();
+
+// Periodically refresh network
+setInterval(() => {
+  if (!simRunning) fetchNetwork();
+}, 10000);
+</script>
+</body>
+</html>
