@@ -89,7 +89,8 @@ canvas#queueChart{display:block}
 
 <!-- Stats -->
 <div class="stats">
-  <div class="sc"><div class="l">Throughput</div><div class="v c2" id="s1">0</div></div>
+  <div class="sc"><div class="l">Completed</div><div class="v c2" id="s1">0</div></div>
+  <div class="sc"><div class="l">Throughput</div><div class="v c2" id="s6">0/min</div></div>
   <div class="sc"><div class="l">Avg Wait</div><div class="v c3" id="s2">0s</div></div>
   <div class="sc"><div class="l">Queue</div><div class="v c1" id="s3">0</div></div>
   <div class="sc"><div class="l">Phase</div><div class="v c5" id="s4">-</div></div>
@@ -382,7 +383,7 @@ function updateVehicles() {
   const avgWait = totalCompleted > 0 ? (totalWaitTime / totalCompleted).toFixed(1) : '0';
   document.getElementById('s2').textContent = avgWait + 's';
   const throughput = simStep > 0 ? (totalCompleted / simStep * 60).toFixed(1) : '0';
-  // Throughput displayed per minute
+  document.getElementById('s6').textContent = throughput + '/min';
 }
 
 // ============================================================
@@ -859,7 +860,7 @@ function updateSignalDisplay() {
 
   list.innerHTML = phases.map(p => {
     const active = currentPhase === p.key;
-    const timeLeft = active ? Math.max(0, 30 - Math.floor(phaseTimer)) : '-';
+    const timeLeft = active ? Math.max(0, PHASE_DURATION - Math.floor(phaseTimer)) : '-';
     return `
       <div class="phase-row">
         <div class="phase-dot" style="background:${active ? p.color : '#333'};box-shadow:${active ? '0 0 8px ' + p.color : 'none'}"></div>
