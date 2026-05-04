@@ -247,16 +247,16 @@ function handleEvent(ev) {
       currentPhase = phase;
       phaseTimer = 0;
     }
+    addLogItem(ev);
+  }
+
+  if (ev.event_type === 'thinking') {
+    addLogItem(ev);
   }
 
   if (ev.event_type === 'simulation_step') {
     simStep = data.step || simStep + 1;
     document.getElementById('s5').textContent = simStep;
-    spawnVehicles();
-  }
-
-  if (ev.event_type === 'decision' || ev.event_type === 'thinking') {
-    addLogItem(ev);
   }
 
   updateSignalDisplay();
@@ -275,7 +275,6 @@ function spawnVehicles() {
       // Probability based on lane type
       const prob = lane === 'through' ? 0.4 : lane === 'left' ? 0.15 : 0.12;
       if (Math.random() < prob) {
-        const reverse = approach >= 2; // S, W approach from opposite side
         vehicles.push({
           id: `v_${Date.now()}_${Math.random().toString(36).slice(2,5)}`,
           approach,
@@ -285,13 +284,16 @@ function spawnVehicles() {
           color: C.vehicleColors[Math.floor(Math.random() * C.vehicleColors.length)],
           emergency: false,
           waiting: false,
+          entryTime: Date.now(),
         });
+        totalGenerated++;
       }
     }
   }
 
   // Cap vehicles
   if (vehicles.length > 150) vehicles = vehicles.slice(-100);
+  document.getElementById('s3').textContent = vehicles.length;
 }
 
 function spawnEmergency() {
@@ -340,7 +342,6 @@ function updateVehicles() {
 
     // Emergency vehicles get special treatment
     if (v.emergency && v.t > 0.3) {
-      // Force green for emergency approach
       const targetPhase = (v.approach === 0 || v.approach === 2) ? 'NS_THROUGH' : 'EW_THROUGH';
       if (currentPhase !== targetPhase) {
         currentPhase = targetPhase;
@@ -368,20 +369,59 @@ function updateVehicles() {
     v.t += v.speed;
 
     if (v.t >= 1) {
+      // Vehicle completed — track stats
+      totalCompleted++;
+      totalWaitTime += (Date.now() - v.entryTime) / 1000;
       vehicles.splice(i, 1);
     }
   }
 
+  // Update stats display
   document.getElementById('s3').textContent = vehicles.length;
+  document.getElementById('s1').textContent = totalCompleted;
+  const avgWait = totalCompleted > 0 ? (totalWaitTime / totalCompleted).toFixed(1) : '0';
+  document.getElementById('s2').textContent = avgWait + 's';
+  const throughput = simStep > 0 ? (totalCompleted / simStep * 60).toFixed(1) : '0';
+  // Throughput displayed per minute
 }
 
 // ============================================================
 // CANVAS RENDERING
 // ============================================================
+let spawnTimer = 0;
+const PHASE_CYCLE = ['NS_LEFT', 'NS_THROUGH', 'EW_LEFT', 'EW_THROUGH'];
+let phaseCycleIdx = 0;
+const PHASE_DURATION = 5; // seconds per phase in demo mode
+let totalCompleted = 0;
+let totalWaitTime = 0;
+let totalGenerated = 0;
+
 function renderLoop(ts) {
   animFrame++;
   if (simRunning) {
     phaseTimer += 1/60;
+    spawnTimer += 1/60;
+
+    // Auto-cycle signal phases
+    if (phaseTimer >= PHASE_DURATION) {
+      phaseCycleIdx = (phaseCycleIdx + 1) % PHASE_CYCLE.length;
+      currentPhase = PHASE_CYCLE[phaseCycleIdx];
+      phaseTimer = 0;
+      addLogItem({
+        event_type: 'decision',
+        agent_id: 'llm',
+        timestamp: Date.now() / 1000,
+        data: { decision: { phase: currentPhase }, message: `Adaptive: ${currentPhase}` },
+      });
+    }
+
+    // Spawn vehicles every ~0.4s
+    if (spawnTimer > 0.4) {
+      spawnVehicles();
+      spawnTimer = 0;
+      simStep++;
+      document.getElementById('s5').textContent = simStep;
+    }
     updateVehicles();
   }
   draw();
@@ -694,28 +734,42 @@ function drawVehicle(v) {
     ctx.shadowColor = '#ff3366';
     ctx.shadowBlur = 16 * pulse;
     ctx.fillStyle = '#ff3366';
-    ctx.fillRect(-8, -4, 16, 8);
+    ctx.fillRect(-10, -5, 20, 10);
 
     // Siren
     const sirenPhase = Math.floor(Date.now() / 180) % 2;
     ctx.fillStyle = sirenPhase ? '#4488ff' : '#ff3366';
-    ctx.beginPath(); ctx.arc(-5, -5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-6, -6, 3, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = sirenPhase ? '#ff3366' : '#4488ff';
-    ctx.beginPath(); ctx.arc(5, -5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(6, -6, 3, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
   } else {
-    // Normal vehicle
-    const vw = v.waiting ? 8 : 10;
-    const vh = 5;
+    // Normal vehicle — larger, more visible
+    const vw = v.waiting ? 10 : 14;
+    const vh = v.waiting ? 6 : 8;
     ctx.fillStyle = v.color;
     ctx.shadowColor = v.color;
-    ctx.shadowBlur = v.waiting ? 2 : 6;
-    ctx.fillRect(-vw/2, -vh/2, vw, vh);
+    ctx.shadowBlur = v.waiting ? 3 : 8;
+    // Rounded rectangle
+    const rx = -vw/2, ry = -vh/2;
+    ctx.beginPath();
+    ctx.moveTo(rx + 2, ry);
+    ctx.lineTo(rx + vw - 2, ry);
+    ctx.quadraticCurveTo(rx + vw, ry, rx + vw, ry + 2);
+    ctx.lineTo(rx + vw, ry + vh - 2);
+    ctx.quadraticCurveTo(rx + vw, ry + vh, rx + vw - 2, ry + vh);
+    ctx.lineTo(rx + 2, ry + vh);
+    ctx.quadraticCurveTo(rx, ry + vh, rx, ry + vh - 2);
+    ctx.lineTo(rx, ry + 2);
+    ctx.quadraticCurveTo(rx, ry, rx + 2, ry);
+    ctx.closePath();
+    ctx.fill();
     ctx.shadowBlur = 0;
 
-    // Headlight
+    // Headlights
     ctx.fillStyle = '#fff';
-    ctx.fillRect(vw/2 - 1, -1.5, 2, 3);
+    ctx.fillRect(vw/2 - 2, -2, 3, 1.5);
+    ctx.fillRect(vw/2 - 2, 0.5, 3, 1.5);
   }
 
   ctx.restore();
@@ -853,25 +907,32 @@ async function startSim() {
     let url = `${API}/api/simulation/start?steps=100&speed=2`;
     if (scenario !== 'normal') url += `&preset=${scenario}`;
     await fetch(url, { method: 'POST' });
-    simRunning = true;
-    document.getElementById('sd').className = 'dot sim';
-    document.getElementById('st').textContent = 'SIMULATING';
-    document.getElementById('bGo').style.display = 'none';
-    document.getElementById('bStop').style.display = 'inline-block';
   } catch(e) {
-    alert('Start failed: ' + e.message);
+    console.log('Server simulation not available, running in standalone mode');
   }
+  // Always start client-side animation
+  simRunning = true;
+  vehicles = [];
+  simStep = 0;
+  phaseTimer = 0;
+  phaseCycleIdx = 0;
+  currentPhase = PHASE_CYCLE[0];
+  document.getElementById('sd').className = 'dot sim';
+  document.getElementById('st').textContent = 'SIMULATING';
+  document.getElementById('bGo').style.display = 'none';
+  document.getElementById('bStop').style.display = 'inline-block';
+  document.getElementById('s5').textContent = '0';
 }
 
 async function stopSim() {
   try {
     await fetch(`${API}/api/simulation/stop`, { method: 'POST' });
-    simRunning = false;
-    document.getElementById('sd').className = 'dot on';
-    document.getElementById('st').textContent = 'LIVE';
-    document.getElementById('bGo').style.display = 'inline-block';
-    document.getElementById('bStop').style.display = 'none';
   } catch {}
+  simRunning = false;
+  document.getElementById('sd').className = 'dot on';
+  document.getElementById('st').textContent = 'LIVE';
+  document.getElementById('bGo').style.display = 'inline-block';
+  document.getElementById('bStop').style.display = 'none';
 }
 
 // ============================================================
