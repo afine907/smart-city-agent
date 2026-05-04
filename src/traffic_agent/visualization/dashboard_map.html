@@ -19,7 +19,7 @@ body{background:#0a0a12;color:#e0e0e0;font-family:'SF Pro Display','Inter',syste
 #map{position:fixed;inset:0;z-index:1}
 
 /* Leaflet overrides for dark theme */
-.leaflet-tile-pane{filter:brightness(0.7) contrast(1.2) saturate(0.3) hue-rotate(180deg)}
+.leaflet-tile-pane{filter:brightness(0.5) saturate(0.5)}
 .leaflet-control-zoom a{background:rgba(12,12,22,.9)!important;color:#aaa!important;border:1px solid #1a1a2e!important}
 .leaflet-control-zoom a:hover{color:#00d4ff!important;border-color:#00d4ff!important}
 .leaflet-control-attribution{display:none!important}
@@ -290,11 +290,20 @@ function initMap() {
     attributionControl: false,
   });
 
-  // Dark tile layer (CartoDB dark matter)
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  // Dark tile layer — try CartoDB dark, fallback to OSM dark style
+  const darkTiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
     subdomains: 'abcd',
-  }).addTo(map);
+  });
+
+  // Also add a standard OSM layer as fallback
+  const osmTiles = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OSM',
+  });
+
+  // Use dark tiles by default
+  darkTiles.addTo(map);
 
   // Zoom control (top-right style)
   L.control.zoom({ position: 'bottomright' }).addTo(map);
