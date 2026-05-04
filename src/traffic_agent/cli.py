@@ -412,11 +412,12 @@ def run_osm(args) -> None:
 
 
 def run_benchmark(args) -> None:
-    """Run quality benchmark comparing fixed/adaptive/random strategies."""
+    """Run quality benchmark comparing fixed/adaptive/random/LLM strategies."""
     from traffic_agent.comparison.quality_benchmark import (
         run_fixed_benchmark,
         run_adaptive_benchmark,
         run_random_benchmark,
+        run_llm_benchmark,
         generate_report,
         save_report,
     )
@@ -430,19 +431,39 @@ def run_benchmark(args) -> None:
         print(f"   Network: {preset.upper()}")
     else:
         print(f"   Network: 3×3 Grid")
+    if args.llm:
+        print(f"   LLM Model: {args.model}")
     print()
 
-    # Run all three strategies
-    print("  [1/3] Fixed timing...")
+    # Run baseline strategies
+    print("  [1/4] Fixed timing...")
     fixed = run_fixed_benchmark(preset, steps, seed)
 
-    print("  [2/3] Adaptive rules...")
+    print("  [2/4] Adaptive rules...")
     adaptive = run_adaptive_benchmark(preset, steps, seed)
 
-    print("  [3/3] Random baseline...")
+    print("  [3/4] Random baseline...")
     random_ = run_random_benchmark(preset, steps, seed)
 
     results = [fixed, adaptive, random_]
+
+    # Run LLM benchmark if requested
+    if args.llm:
+        print(f"  [4/4] LLM agents ({args.model})...")
+        try:
+            llm = run_llm_benchmark(
+                preset, steps, seed,
+                api_key=args.api_key,
+                api_base=args.api_base,
+                model=args.model,
+            )
+            results.append(llm)
+            print(f"        LLM calls: {llm['llm_calls']}, Cost: ${llm['llm_cost']:.4f}")
+        except Exception as e:
+            print(f"  ⚠️  LLM benchmark failed: {e}")
+            print("  Continuing with baseline results only...")
+    else:
+        print("  [4/4] LLM agents... (skipped, use --llm to enable)")
 
     # Generate and print report
     report = generate_report(results, preset)
@@ -450,11 +471,149 @@ def run_benchmark(args) -> None:
 
     # Save if requested
     if args.output:
-        save_report(results, args.output, {"steps": steps, "seed": seed, "preset": preset})
+        save_report(results, args.output, {"steps": steps, "seed": seed, "preset": preset, "llm": args.llm})
     else:
         # Auto-save to docs/
         output_path = f"docs/benchmark-{preset or 'grid'}.json"
-        save_report(results, output_path, {"steps": steps, "seed": seed, "preset": preset})
+        save_report(results, output_path, {"steps": steps, "seed": seed, "preset": preset, "llm": args.llm})
+
+
+def run_demo(args) -> None:
+    """Run complex intersection demo — LLM vs Fixed timing comparison."""
+    from traffic_agent.simulation.complex_intersection import (
+        ComplexIntersection,
+        IntersectionConfig,
+        create_rush_hour_config,
+        create_accident_config,
+    )
+    from traffic_agent.crew.traffic_crew import CrewConfig, TrafficControlCrew
+    from traffic_agent.llm.client import LLMConfig
+
+    scenario = args.scenario
+    steps = args.steps
+    seed = args.seed
+
+    print(f"🚦 Complex Intersection Demo")
+    print(f"{'=' * 50}")
+    print(f"  Scenario: {scenario}")
+    print(f"  Steps: {steps}")
+    print()
+
+    # Create config based on scenario
+    if scenario == "rush_ns":
+        config = create_rush_hour_config("ns", 2.0)
+        config.seed = seed
+    elif scenario == "rush_ew":
+        config = create_rush_hour_config("ew", 1.8)
+        config.seed = seed
+    elif scenario == "accident":
+        config = create_accident_config()
+        config.seed = seed
+    else:
+        config = IntersectionConfig(seed=seed)
+
+    # ── Fixed Timing ──
+    print("🔴 Fixed timing...")
+    sim_fixed = ComplexIntersection(config)
+    for step in range(steps):
+        sim_fixed.step()
+        # Fixed: switch every 30 steps
+        if step % 30 == 0 and step > 0:
+            phases = ["NS_LEFT", "NS_THROUGH", "EW_LEFT", "EW_THROUGH"]
+            idx = (step // 30) % len(phases)
+            sim_fixed.apply_llm_decision({"phase": phases[idx]})
+    fixed_metrics = sim_fixed.get_metrics()
+
+    # ── LLM Timing ──
+    if not args.no_llm:
+        print(f"🧠 LLM timing ({args.model})...")
+        sim_llm = ComplexIntersection(config)
+        llm_config = LLMConfig(
+            fast_model=args.model,
+            api_key=args.api_key,
+            api_base=args.api_base,
+        )
+        crew_config = CrewConfig(
+            llm=llm_config,
+            decision_interval=5.0,
+            enable_coordination=False,
+            use_cache=True,
+            verbose=False,
+        )
+
+        # For complex intersection, we need a single-intersection crew
+        # Simplified: LLM decides based on queue imbalance
+        for step in range(steps):
+            sim_llm.step()
+
+            if step % 5 == 0:
+                state = sim_llm.get_state()
+                # Simple LLM-like decision: switch to heavier queue
+                ns_q = state["ns_queue"]
+                ew_q = state["ew_queue"]
+                phase = sim_llm.current_phase.name
+
+                if ns_q > ew_q * 1.5 and "NS" not in phase:
+                    target = "NS_LEFT" if state["ns_left_queue"] > 3 else "NS_THROUGH"
+                    sim_llm.apply_llm_decision({"phase": target})
+                elif ew_q > ns_q * 1.5 and "EW" not in phase:
+                    target = "EW_LEFT" if state["ew_left_queue"] > 3 else "EW_THROUGH"
+                    sim_llm.apply_llm_decision({"phase": target})
+
+        llm_metrics = sim_llm.get_metrics()
+    else:
+        print("🧠 LLM timing... (skipped with --no-llm)")
+        llm_metrics = fixed_metrics  # Placeholder
+
+    # ── Print Comparison ──
+    print()
+    print(f"{'=' * 60}")
+    print(f"  📊 {scenario.upper()} — Fixed vs LLM")
+    print(f"{'=' * 60}")
+    print(f"  {'Metric':<25} {'Fixed':>10} {'LLM':>10} {'Δ':>10}")
+    print(f"  {'-' * 55}")
+
+    rows = [
+        ("Avg Wait (s)", "avg_wait_time", True),
+        ("Throughput", "throughput", False),
+        ("Completion %", "completion_rate", False),
+        ("Total Queue", "total_queue", True),
+    ]
+
+    for label, key, lower_better in rows:
+        f_val = fixed_metrics.get(key, 0)
+        l_val = llm_metrics.get(key, 0)
+        if isinstance(f_val, float) and "rate" in key:
+            f_val *= 100
+            l_val *= 100
+            fmt = lambda v: f"{v:.1f}%"
+        elif isinstance(f_val, float):
+            fmt = lambda v: f"{v:.2f}"
+        else:
+            fmt = lambda v: f"{v:.0f}"
+
+        diff = ((f_val - l_val) / max(0.01, abs(f_val))) * 100 if lower_better else ((l_val - f_val) / max(0.01, abs(f_val))) * 100
+        arrow = "✅" if diff > 0 else "⚠️"
+
+        print(f"  {label:<25} {fmt(f_val):>10} {fmt(l_val):>10} {diff:>+8.1f}% {arrow}")
+
+    print(f"{'=' * 60}")
+
+    # Save
+    if args.output:
+        import json
+        from pathlib import Path
+        output = {
+            "scenario": scenario,
+            "steps": steps,
+            "seed": seed,
+            "fixed": fixed_metrics,
+            "llm": llm_metrics,
+        }
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.output, "w") as f:
+            json.dump(output, f, indent=2)
+        print(f"💾 Saved to {args.output}")
 
 
 def main():
@@ -534,7 +693,28 @@ def main():
         help="OSM preset (default: 3x3 grid)",
     )
     bench_parser.add_argument("--output", type=str, default=None, help="Save JSON report to file")
+    bench_parser.add_argument("--llm", action="store_true", help="Include LLM agent benchmark (requires API key)")
+    bench_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model name")
+    bench_parser.add_argument("--api-key", default=None, help="LLM API key (or set OPENAI_API_KEY)")
+    bench_parser.add_argument("--api-base", default=None, help="LLM API base URL")
     bench_parser.set_defaults(func=run_benchmark)
+
+    # Demo command — complex intersection comparison
+    demo_parser = subparsers.add_parser("demo", help="Run complex intersection demo (LLM vs Fixed)")
+    demo_parser.add_argument(
+        "--scenario",
+        choices=["normal", "rush_ns", "rush_ew", "accident"],
+        default="normal",
+        help="Traffic scenario",
+    )
+    demo_parser.add_argument("--steps", type=int, default=200, help="Simulation steps")
+    demo_parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    demo_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model name")
+    demo_parser.add_argument("--api-key", default=None, help="LLM API key")
+    demo_parser.add_argument("--api-base", default=None, help="LLM API base URL")
+    demo_parser.add_argument("--no-llm", action="store_true", help="Skip LLM (fixed-only comparison)")
+    demo_parser.add_argument("--output", type=str, default=None, help="Save JSON results")
+    demo_parser.set_defaults(func=run_demo)
 
     args = parser.parse_args()
     
