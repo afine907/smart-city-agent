@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🚦 Tesla Intersection — LLM Traffic Control</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0f;color:#e0e0e0;font-family:'SF Pro Display','Inter',system-ui,sans-serif;overflow:hidden}
+canvas#main{position:fixed;top:0;left:0;width:100%;height:100%}
+
+/* Top bar */
+.top{position:fixed;top:0;left:0;right:0;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(180deg,rgba(10,10,15,.95) 60%,transparent);z-index:10}
+.top h1{font-size:15px;font-weight:600;letter-spacing:1.5px;color:#00d4ff}
+.top .sub{font-size:11px;color:#666;margin-top:2px}
+.pill{display:flex;align-items:center;gap:8px;padding:5px 14px;border-radius:20px;background:rgba(20,20,30,.9);border:1px solid #222;font-size:11px}
+.dot{width:7px;height:7px;border-radius:50%;transition:.3s}
+.dot.on{background:#00ff88;box-shadow:0 0 10px #00ff88}
+.dot.off{background:#ff3366}
+.dot.sim{background:#ffcc00;box-shadow:0 0 10px #ffcc00;animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Stats cards */
+.stats{position:fixed;bottom:20px;left:20px;display:flex;gap:8px;z-index:10}
+.sc{background:rgba(15,15,25,.92);border:1px solid #1a1a2e;border-radius:10px;padding:12px 16px;backdrop-filter:blur(12px);min-width:100px}
+.sc .l{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1.2px;font-weight:500}
+.sc .v{font-size:20px;font-weight:700;margin-top:3px}
+.c1{color:#00d4ff}.c2{color:#00ff88}.c3{color:#ffcc00}.c4{color:#ff3366}.c5{color:#bc8cff}
+
+/* Signal info */
+.signal-info{position:fixed;bottom:20px;right:20px;z-index:10}
+.si{background:rgba(15,15,25,.92);border:1px solid #1a1a2e;border-radius:10px;padding:14px 18px;backdrop-filter:blur(12px);min-width:200px}
+.si h3{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px;font-weight:500}
+.phase-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:12px}
+.phase-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.phase-name{color:#aaa;flex:1}
+.phase-time{color:#666;font-variant-numeric:tabular-nums}
+
+/* Controls */
+.ctrl{position:fixed;top:70px;right:20px;z-index:10}
+.cg{background:rgba(15,15,25,.92);border:1px solid #1a1a2e;border-radius:10px;padding:14px;backdrop-filter:blur(12px)}
+.cg h3{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500}
+.btn{padding:7px 14px;border:1px solid #222;border-radius:6px;background:transparent;color:#ccc;font-size:11px;font-family:inherit;cursor:pointer;transition:.2s;margin:2px}
+.btn:hover{border-color:#00d4ff;color:#00d4ff}
+.btn.go{background:#00ff88;color:#000;border-color:#00ff88;font-weight:600}
+.btn.go:hover{background:#00cc6a}
+.btn.stop{background:#ff3366;color:#fff;border-color:#ff3366}
+.btn.stop:hover{background:#cc2952}
+.btn.emg{border-color:#ff3366;color:#ff3366}
+.btn.emg:hover{background:rgba(255,51,102,.15)}
+select{width:100%;padding:7px 10px;border:1px solid #222;border-radius:6px;background:#0f0f1a;color:#ccc;font-size:11px;font-family:inherit;margin-bottom:8px;cursor:pointer}
+select:focus{outline:none;border-color:#00d4ff}
+
+/* Decision log */
+.log{position:fixed;top:70px;left:20px;width:280px;z-index:10}
+.ll{background:rgba(15,15,25,.92);border:1px solid #1a1a2e;border-radius:10px;padding:12px;backdrop-filter:blur(12px);max-height:50vh;overflow-y:auto}
+.ll::-webkit-scrollbar{width:4px}.ll::-webkit-scrollbar-thumb{background:#222;border-radius:2px}
+.ll h3{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500}
+.li{padding:6px 8px;border-radius:4px;font-size:10px;margin-bottom:4px;border-left:2px solid;animation:fadeIn .3s}
+@keyframes fadeIn{from{opacity:0;transform:translateX(6px)}to{opacity:1;transform:translateX(0)}}
+.li.think{border-color:#00d4ff;background:rgba(0,212,255,.04)}
+.li.decide{border-color:#00ff88;background:rgba(0,255,136,.04)}
+.li.alert{border-color:#ff3366;background:rgba(255,51,102,.04)}
+.li .ts{color:#555;margin-right:4px;font-variant-numeric:tabular-nums}
+.li .ag{color:#00d4ff;font-weight:600}
+
+/* Queue chart */
+.qchart{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:10}
+.qc{background:rgba(15,15,25,.92);border:1px solid #1a1a2e;border-radius:10px;padding:12px;backdrop-filter:blur(12px)}
+.qc h3{font-size:9px;color:#555;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:8px;font-weight:500;text-align:center}
+canvas#queueChart{display:block}
+</style>
+</head>
+<body>
+
+<canvas id="main"></canvas>
+
+<!-- Top bar -->
+<div class="top">
+  <div>
+    <h1>🚦 INTERSECTION CONTROL</h1>
+    <div class="sub">LLM-Powered Adaptive Signal Timing</div>
+  </div>
+  <div class="pill">
+    <div class="dot off" id="sd"></div>
+    <span id="st">IDLE</span>
+  </div>
+</div>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="sc"><div class="l">Throughput</div><div class="v c2" id="s1">0</div></div>
+  <div class="sc"><div class="l">Avg Wait</div><div class="v c3" id="s2">0s</div></div>
+  <div class="sc"><div class="l">Queue</div><div class="v c1" id="s3">0</div></div>
+  <div class="sc"><div class="l">Phase</div><div class="v c5" id="s4">-</div></div>
+  <div class="sc"><div class="l">Step</div><div class="v c1" id="s5">0</div></div>
+</div>
+
+<!-- Signal info -->
+<div class="signal-info">
+  <div class="si">
+    <h3>Signal Phases</h3>
+    <div id="phaseList"></div>
+  </div>
+</div>
+
+<!-- Controls -->
+<div class="ctrl">
+  <div class="cg">
+    <h3>Scenario</h3>
+    <select id="scenario">
+      <option value="normal">🟢 Normal Traffic</option>
+      <option value="rush_ns">🔴 Rush Hour (N-S)</option>
+      <option value="rush_ew">🔴 Rush Hour (E-W)</option>
+      <option value="accident">🚑 Accident + Emergency</option>
+      <option value="multi">📊 Multi-Phase Demo</option>
+    </select>
+    <div>
+      <button class="btn go" id="bGo" onclick="startSim()">▶ Start</button>
+      <button class="btn stop" id="bStop" onclick="stopSim()" style="display:none">■ Stop</button>
+    </div>
+    <div style="margin-top:8px">
+      <button class="btn emg" onclick="spawnEmergency()">🚑 Emergency</button>
+    </div>
+  </div>
+</div>
+
+<!-- Decision log -->
+<div class="log">
+  <div class="ll">
+    <h3>LLM Decisions</h3>
+    <div id="logList"></div>
+  </div>
+</div>
+
+<!-- Queue chart -->
+<div class="qchart">
+  <div class="qc">
+    <h3>Lane Queues</h3>
+    <canvas id="queueChart" width="280" height="120"></canvas>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const API = window.location.origin;
+const C = {
+  bg: '#0a0a0f',
+  road: '#18182a',
+  roadEdge: '#252540',
+  laneMark: '#2a2a4a',
+  laneMarkYellow: '#cc9900',
+  sidewalk: '#12121e',
+  grass: '#0d1a0d',
+  greenLight: '#00ff88',
+  redLight: '#ff3366',
+  yellowLight: '#ffcc00',
+  accent: '#00d4ff',
+  text: '#666',
+  textBright: '#ccc',
+  vehicleColors: ['#00d4ff','#00ff88','#ffcc00','#ff3366','#bc8cff','#ff8844','#44ffdd','#ff44aa','#88aaff','#ffaa44'],
+};
+
+// ============================================================
+// STATE
+// ============================================================
+let canvas, ctx, qcCanvas, qcCtx;
+let W, H, CX, CY;  // canvas dims and center
+let simRunning = false;
+let simStep = 0;
+let currentPhase = 'NS_LEFT';
+let phaseTimer = 0;
+let vehicles = [];  // {id, approach, lane, t, color, speed, emergency}
+let es = null;
+let animFrame = 0;
+
+// Intersection geometry
+const LANE_W = 18;      // lane width
+const ROAD_W = LANE_W * 3;  // 3 lanes per approach
+const IX_R = 22;        // intersection radius
+const ROAD_LEN = 220;   // road length from center
+
+// ============================================================
+// INIT
+// ============================================================
+function init() {
+  canvas = document.getElementById('main');
+  ctx = canvas.getContext('2d');
+  qcCanvas = document.getElementById('queueChart');
+  qcCtx = qcCanvas.getContext('2d');
+
+  resize();
+  window.addEventListener('resize', resize);
+  connect();
+  requestAnimationFrame(renderLoop);
+}
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  CX = W / 2;
+  CY = H / 2 + 20;
+  canvas.width = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+
+  const dpr = devicePixelRatio;
+  qcCanvas.width = 280 * dpr;
+  qcCanvas.height = 120 * dpr;
+  qcCanvas.style.width = '280px';
+  qcCanvas.style.height = '120px';
+  qcCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ============================================================
+// SSE CONNECTION
+// ============================================================
+function connect() {
+  if (es) es.close();
+  es = new EventSource(`${API}/api/events/stream`);
+  es.onopen = () => {
+    document.getElementById('sd').className = 'dot on';
+    document.getElementById('st').textContent = 'LIVE';
+  };
+  es.onerror = () => {
+    document.getElementById('sd').className = 'dot off';
+    document.getElementById('st').textContent = 'OFFLINE';
+    es.close();
+    setTimeout(connect, 3000);
+  };
+
+  ['thinking','decision','conflict','simulation_start','simulation_step','simulation_end']
+    .forEach(t => es.addEventListener(t, e => handleEvent(JSON.parse(e.data))));
+  es.addEventListener('keepalive', () => {});
+}
+
+function handleEvent(ev) {
+  const data = ev.data || {};
+
+  if (ev.event_type === 'decision' && data.decision) {
+    const phase = data.decision.phase;
+    if (phase && phase !== currentPhase) {
+      currentPhase = phase;
+      phaseTimer = 0;
+    }
+  }
+
+  if (ev.event_type === 'simulation_step') {
+    simStep = data.step || simStep + 1;
+    document.getElementById('s5').textContent = simStep;
+    spawnVehicles();
+  }
+
+  if (ev.event_type === 'decision' || ev.event_type === 'thinking') {
+    addLogItem(ev);
+  }
+
+  updateSignalDisplay();
+}
+
+// ============================================================
+// VEHICLE MANAGEMENT
+// ============================================================
+function spawnVehicles() {
+  // Spawn vehicles on each approach
+  const approaches = [0, 1, 2, 3]; // N, E, S, W
+  const laneTypes = ['left', 'through', 'right'];
+
+  for (const approach of approaches) {
+    for (const lane of laneTypes) {
+      // Probability based on lane type
+      const prob = lane === 'through' ? 0.4 : lane === 'left' ? 0.15 : 0.12;
+      if (Math.random() < prob) {
+        const reverse = approach >= 2; // S, W approach from opposite side
+        vehicles.push({
+          id: `v_${Date.now()}_${Math.random().toString(36).slice(2,5)}`,
+          approach,
+          lane,
+          t: 0,
+          speed: 0.004 + Math.random() * 0.003,
+          color: C.vehicleColors[Math.floor(Math.random() * C.vehicleColors.length)],
+          emergency: false,
+          waiting: false,
+        });
+      }
+    }
+  }
+
+  // Cap vehicles
+  if (vehicles.length > 150) vehicles = vehicles.slice(-100);
+}
+
+function spawnEmergency() {
+  const approach = Math.floor(Math.random() * 4);
+  vehicles.push({
+    id: `ev_${Date.now()}`,
+    approach,
+    lane: 'through',
+    t: 0,
+    speed: 0.007,
+    color: '#ff3366',
+    emergency: true,
+    waiting: false,
+  });
+
+  addLogItem({
+    event_type: 'decision',
+    agent_id: 'system',
+    timestamp: Date.now() / 1000,
+    data: { decision: { phase: 'EMERGENCY' }, message: '🚑 Emergency vehicle approaching from ' + ['N','E','S','W'][approach] },
+  });
+
+  document.getElementById('s3').textContent = vehicles.length;
+}
+
+function updateVehicles() {
+  const isGreen = (approach, lane) => {
+    const phase = currentPhase;
+    if (phase.includes('NS')) {
+      const nsApproaches = [0, 2];
+      if (!nsApproaches.includes(approach)) return false;
+      if (phase.includes('LEFT')) return lane === 'left';
+      return lane === 'through' || lane === 'right';
+    }
+    if (phase.includes('EW')) {
+      const ewApproaches = [1, 3];
+      if (!ewApproaches.includes(approach)) return false;
+      if (phase.includes('LEFT')) return lane === 'left';
+      return lane === 'through' || lane === 'right';
+    }
+    return false;
+  };
+
+  for (let i = vehicles.length - 1; i >= 0; i--) {
+    const v = vehicles[i];
+
+    // Emergency vehicles get special treatment
+    if (v.emergency && v.t > 0.3) {
+      // Force green for emergency approach
+      const targetPhase = (v.approach === 0 || v.approach === 2) ? 'NS_THROUGH' : 'EW_THROUGH';
+      if (currentPhase !== targetPhase) {
+        currentPhase = targetPhase;
+        phaseTimer = 0;
+        addLogItem({
+          event_type: 'decision',
+          agent_id: 'system',
+          timestamp: Date.now() / 1000,
+          data: { decision: { phase: targetPhase }, message: '🚑 Preempting signal for emergency' },
+        });
+      }
+    }
+
+    // Check if vehicle should stop at intersection
+    if (v.t >= 0.42 && v.t <= 0.48) {
+      if (!isGreen(v.approach, v.lane) && !v.emergency) {
+        v.waiting = true;
+        v.speed = 0;
+        continue;
+      }
+    }
+
+    v.waiting = false;
+    v.speed = v.emergency ? 0.007 : (0.004 + Math.random() * 0.001);
+    v.t += v.speed;
+
+    if (v.t >= 1) {
+      vehicles.splice(i, 1);
+    }
+  }
+
+  document.getElementById('s3').textContent = vehicles.length;
+}
+
+// ============================================================
+// CANVAS RENDERING
+// ============================================================
+function renderLoop(ts) {
+  animFrame++;
+  if (simRunning) {
+    phaseTimer += 1/60;
+    updateVehicles();
+  }
+  draw();
+  drawQueueChart();
+  requestAnimationFrame(renderLoop);
+}
+
+function draw() {
+  ctx.fillStyle = C.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Background grid
+  drawGrid();
+
+  // Draw intersection
+  drawRoads();
+  drawIntersection();
+  drawSignalHeads();
+  drawLaneMarkings();
+
+  // Draw vehicles
+  for (const v of vehicles) {
+    drawVehicle(v);
+  }
+
+  // Draw approach labels
+  drawLabels();
+}
+
+function drawGrid() {
+  ctx.strokeStyle = 'rgba(30,30,50,0.3)';
+  ctx.lineWidth = 0.5;
+  const step = 50;
+  for (let x = CX % step; x < W; x += step) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = CY % step; y < H; y += step) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+}
+
+function drawRoads() {
+  const halfRoad = ROAD_W / 2;
+
+  // North road (vertical, above center)
+  ctx.fillStyle = C.road;
+  ctx.fillRect(CX - halfRoad, CY - ROAD_LEN, ROAD_W, ROAD_LEN - IX_R);
+
+  // South road (vertical, below center)
+  ctx.fillRect(CX - halfRoad, CY + IX_R, ROAD_W, ROAD_LEN - IX_R);
+
+  // East road (horizontal, right of center)
+  ctx.fillRect(CX + IX_R, CY - halfRoad, ROAD_LEN - IX_R, ROAD_W);
+
+  // West road (horizontal, left of center)
+  ctx.fillRect(CX - ROAD_LEN, CY - halfRoad, ROAD_LEN - IX_R, ROAD_W);
+
+  // Intersection box
+  ctx.fillStyle = C.road;
+  ctx.fillRect(CX - halfRoad, CY - halfRoad, ROAD_W, ROAD_W);
+
+  // Road edges (subtle glow)
+  ctx.strokeStyle = C.roadEdge;
+  ctx.lineWidth = 1;
+
+  // North edges
+  ctx.beginPath();
+  ctx.moveTo(CX - halfRoad, CY - ROAD_LEN);
+  ctx.lineTo(CX - halfRoad, CY - IX_R);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX + halfRoad, CY - ROAD_LEN);
+  ctx.lineTo(CX + halfRoad, CY - IX_R);
+  ctx.stroke();
+
+  // South edges
+  ctx.beginPath();
+  ctx.moveTo(CX - halfRoad, CY + IX_R);
+  ctx.lineTo(CX - halfRoad, CY + ROAD_LEN);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX + halfRoad, CY + IX_R);
+  ctx.lineTo(CX + halfRoad, CY + ROAD_LEN);
+  ctx.stroke();
+
+  // East edges
+  ctx.beginPath();
+  ctx.moveTo(CX + IX_R, CY - halfRoad);
+  ctx.lineTo(CX + ROAD_LEN, CY - halfRoad);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX + IX_R, CY + halfRoad);
+  ctx.lineTo(CX + ROAD_LEN, CY + halfRoad);
+  ctx.stroke();
+
+  // West edges
+  ctx.beginPath();
+  ctx.moveTo(CX - IX_R, CY - halfRoad);
+  ctx.lineTo(CX - ROAD_LEN, CY - halfRoad);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX - IX_R, CY + halfRoad);
+  ctx.lineTo(CX - ROAD_LEN, CY + halfRoad);
+  ctx.stroke();
+}
+
+function drawLaneMarkings() {
+  const halfRoad = ROAD_W / 2;
+  const laneW = LANE_W;
+
+  // Lane dividers (dashed white)
+  ctx.strokeStyle = C.laneMark;
+  ctx.lineWidth = 1;
+  ctx.setLineDash([8, 12]);
+
+  // North-South lanes
+  for (let offset = -1; offset <= 1; offset += 2) {
+    const x = CX + offset * laneW / 2;
+    // North
+    ctx.beginPath();
+    ctx.moveTo(x, CY - ROAD_LEN);
+    ctx.lineTo(x, CY - IX_R);
+    ctx.stroke();
+    // South
+    ctx.beginPath();
+    ctx.moveTo(x, CY + IX_R);
+    ctx.lineTo(x, CY + ROAD_LEN);
+    ctx.stroke();
+  }
+
+  // East-West lanes
+  for (let offset = -1; offset <= 1; offset += 2) {
+    const y = CY + offset * laneW / 2;
+    // East
+    ctx.beginPath();
+    ctx.moveTo(CX + IX_R, y);
+    ctx.lineTo(CX + ROAD_LEN, y);
+    ctx.stroke();
+    // West
+    ctx.beginPath();
+    ctx.moveTo(CX - ROAD_LEN, y);
+    ctx.lineTo(CX - IX_R, y);
+    ctx.stroke();
+  }
+
+  ctx.setLineDash([]);
+
+  // Yellow center lines (solid)
+  ctx.strokeStyle = C.laneMarkYellow;
+  ctx.lineWidth = 2;
+
+  // N-S center
+  ctx.beginPath();
+  ctx.moveTo(CX, CY - ROAD_LEN);
+  ctx.lineTo(CX, CY - IX_R);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX, CY + IX_R);
+  ctx.lineTo(CX, CY + ROAD_LEN);
+  ctx.stroke();
+
+  // E-W center
+  ctx.beginPath();
+  ctx.moveTo(CX - ROAD_LEN, CY);
+  ctx.lineTo(CX - IX_R, CY);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(CX + IX_R, CY);
+  ctx.lineTo(CX + ROAD_LEN, CY);
+  ctx.stroke();
+
+  // Crosswalk lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 3;
+  const cwOffset = IX_R + 8;
+
+  // North crosswalk
+  for (let i = -3; i <= 3; i++) {
+    const x = CX + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(x, CY - cwOffset);
+    ctx.lineTo(x, CY - cwOffset - 10);
+    ctx.stroke();
+  }
+  // South crosswalk
+  for (let i = -3; i <= 3; i++) {
+    const x = CX + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(x, CY + cwOffset);
+    ctx.lineTo(x, CY + cwOffset + 10);
+    ctx.stroke();
+  }
+  // East crosswalk
+  for (let i = -3; i <= 3; i++) {
+    const y = CY + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(CX + cwOffset, y);
+    ctx.lineTo(CX + cwOffset + 10, y);
+    ctx.stroke();
+  }
+  // West crosswalk
+  for (let i = -3; i <= 3; i++) {
+    const y = CY + i * 6;
+    ctx.beginPath();
+    ctx.moveTo(CX - cwOffset, y);
+    ctx.lineTo(CX - cwOffset - 10, y);
+    ctx.stroke();
+  }
+}
+
+function drawIntersection() {
+  const halfRoad = ROAD_W / 2;
+
+  // Intersection area (slightly different color)
+  ctx.fillStyle = '#1a1a30';
+  ctx.fillRect(CX - halfRoad, CY - halfRoad, ROAD_W, ROAD_W);
+
+  // Subtle border
+  ctx.strokeStyle = 'rgba(0,212,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(CX - halfRoad, CY - halfRoad, ROAD_W, ROAD_W);
+}
+
+function drawSignalHeads() {
+  const halfRoad = ROAD_W / 2;
+  const isNS = currentPhase.includes('NS');
+  const isEW = currentPhase.includes('EW');
+  const isYellow = currentPhase.includes('YELLOW');
+  const isAllRed = currentPhase.includes('ALL_RED');
+
+  // Draw signal heads at each approach
+  const signals = [
+    { x: CX - halfRoad - 12, y: CY, dir: 'W', isGreen: isEW && !isYellow },
+    { x: CX + halfRoad + 12, y: CY, dir: 'E', isGreen: isEW && !isYellow },
+    { x: CX, y: CY - halfRoad - 12, dir: 'N', isGreen: isNS && !isYellow },
+    { x: CX, y: CY + halfRoad + 12, dir: 'S', isGreen: isNS && !isYellow },
+  ];
+
+  for (const sig of signals) {
+    const color = isAllRed ? C.redLight : isYellow ? C.yellowLight : sig.isGreen ? C.greenLight : C.redLight;
+
+    // Signal housing
+    ctx.fillStyle = '#111';
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sig.x, sig.y, 8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Light
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.arc(sig.x, sig.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    // Glow
+    const grd = ctx.createRadialGradient(sig.x, sig.y, 0, sig.x, sig.y, 16);
+    grd.addColorStop(0, color + '30');
+    grd.addColorStop(1, color + '00');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(sig.x, sig.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawVehicle(v) {
+  const halfRoad = ROAD_W / 2;
+  const laneW = LANE_W;
+
+  // Calculate position based on approach and lane
+  let x, y, angle;
+  const laneOffset = v.lane === 'left' ? -laneW : v.lane === 'right' ? laneW : 0;
+  const t = v.t;
+
+  switch (v.approach) {
+    case 0: // North (approaching from top)
+      x = CX + laneOffset;
+      y = CY - ROAD_LEN + t * ROAD_LEN;
+      angle = Math.PI / 2; // pointing down
+      break;
+    case 1: // East (approaching from right)
+      x = CX + ROAD_LEN - t * ROAD_LEN;
+      y = CY + laneOffset;
+      angle = Math.PI; // pointing left
+      break;
+    case 2: // South (approaching from bottom)
+      x = CX - laneOffset;
+      y = CY + ROAD_LEN - t * ROAD_LEN;
+      angle = -Math.PI / 2; // pointing up
+      break;
+    case 3: // West (approaching from left)
+      x = CX - ROAD_LEN + t * ROAD_LEN;
+      y = CY - laneOffset;
+      angle = 0; // pointing right
+      break;
+  }
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  if (v.emergency) {
+    // Emergency vehicle — pulsing
+    const pulse = Math.sin(Date.now() / 120) * 0.4 + 0.6;
+    ctx.shadowColor = '#ff3366';
+    ctx.shadowBlur = 16 * pulse;
+    ctx.fillStyle = '#ff3366';
+    ctx.fillRect(-8, -4, 16, 8);
+
+    // Siren
+    const sirenPhase = Math.floor(Date.now() / 180) % 2;
+    ctx.fillStyle = sirenPhase ? '#4488ff' : '#ff3366';
+    ctx.beginPath(); ctx.arc(-5, -5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = sirenPhase ? '#ff3366' : '#4488ff';
+    ctx.beginPath(); ctx.arc(5, -5, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  } else {
+    // Normal vehicle
+    const vw = v.waiting ? 8 : 10;
+    const vh = 5;
+    ctx.fillStyle = v.color;
+    ctx.shadowColor = v.color;
+    ctx.shadowBlur = v.waiting ? 2 : 6;
+    ctx.fillRect(-vw/2, -vh/2, vw, vh);
+    ctx.shadowBlur = 0;
+
+    // Headlight
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(vw/2 - 1, -1.5, 2, 3);
+  }
+
+  ctx.restore();
+}
+
+function drawLabels() {
+  const halfRoad = ROAD_W / 2;
+  const labels = [
+    { text: 'N', x: CX, y: CY - ROAD_LEN - 20 },
+    { text: 'S', x: CX, y: CY + ROAD_LEN + 24 },
+    { text: 'E', x: CX + ROAD_LEN + 16, y: CY + 4 },
+    { text: 'W', x: CX - ROAD_LEN - 16, y: CY + 4 },
+  ];
+
+  ctx.font = '600 13px "SF Pro Display", system-ui';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  for (const l of labels) {
+    ctx.fillStyle = '#444';
+    ctx.fillText(l.text, l.x, l.y);
+  }
+
+  // Phase name in center
+  ctx.font = '700 11px "SF Mono", monospace';
+  ctx.fillStyle = currentPhase.includes('NS') ? '#00ff88' : currentPhase.includes('EW') ? '#00d4ff' : '#ffcc00';
+  ctx.fillText(currentPhase, CX, CY);
+}
+
+// ============================================================
+// QUEUE CHART
+// ============================================================
+function drawQueueChart() {
+  const cw = 280, ch = 120;
+  qcCtx.fillStyle = '#0f0f1a';
+  qcCtx.fillRect(0, 0, cw, ch);
+
+  const approaches = ['N', 'E', 'S', 'W'];
+  const colors = ['#00d4ff', '#00ff88', '#ffcc00', '#ff3366'];
+  const barW = 25;
+  const gap = (cw - 40 - barW * 4) / 5;
+
+  // Count vehicles per approach
+  const counts = [0, 0, 0, 0];
+  for (const v of vehicles) {
+    counts[v.approach]++;
+  }
+  const maxCount = Math.max(1, ...counts);
+
+  approaches.forEach((name, i) => {
+    const count = counts[i];
+    const barH = (count / maxCount) * (ch - 35);
+    const x = 20 + gap + i * (barW + gap);
+    const y = ch - 18 - barH;
+
+    // Bar
+    const color = colors[i];
+    qcCtx.fillStyle = color;
+    qcCtx.shadowColor = color;
+    qcCtx.shadowBlur = 4;
+    qcCtx.fillRect(x, y, barW, barH);
+    qcCtx.shadowBlur = 0;
+
+    // Count
+    qcCtx.fillStyle = '#aaa';
+    qcCtx.font = '10px "SF Mono", monospace';
+    qcCtx.textAlign = 'center';
+    qcCtx.fillText(count, x + barW/2, y - 6);
+
+    // Label
+    qcCtx.fillStyle = '#555';
+    qcCtx.fillText(name, x + barW/2, ch - 6);
+  });
+}
+
+// ============================================================
+// SIGNAL DISPLAY
+// ============================================================
+function updateSignalDisplay() {
+  const list = document.getElementById('phaseList');
+  const phases = [
+    { name: 'NS Left', key: 'NS_LEFT', color: '#00ff88' },
+    { name: 'NS Through', key: 'NS_THROUGH', color: '#00ff88' },
+    { name: 'EW Left', key: 'EW_LEFT', color: '#00d4ff' },
+    { name: 'EW Through', key: 'EW_THROUGH', color: '#00d4ff' },
+  ];
+
+  list.innerHTML = phases.map(p => {
+    const active = currentPhase === p.key;
+    const timeLeft = active ? Math.max(0, 30 - Math.floor(phaseTimer)) : '-';
+    return `
+      <div class="phase-row">
+        <div class="phase-dot" style="background:${active ? p.color : '#333'};box-shadow:${active ? '0 0 8px ' + p.color : 'none'}"></div>
+        <span class="phase-name" style="color:${active ? '#fff' : '#555'}">${p.name}</span>
+        <span class="phase-time">${timeLeft}${typeof timeLeft === 'number' ? 's' : ''}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// ============================================================
+// EVENT LOG
+// ============================================================
+function addLogItem(ev) {
+  const list = document.getElementById('logList');
+  const el = document.createElement('div');
+  const data = ev.data || {};
+  const type = ev.event_type;
+
+  let cls = 'think';
+  let detail = '';
+  if (type === 'decision') {
+    cls = 'decide';
+    detail = data.decision ? `→ ${data.decision.phase}` : '';
+  } else if (type === 'thinking') {
+    detail = (data.thought || '').substring(0, 50);
+  } else if (type === 'conflict') {
+    cls = 'alert';
+    detail = data.conflict_type || 'conflict';
+  }
+
+  const time = new Date(ev.timestamp * 1000).toLocaleTimeString('en-US', { hour12: false });
+  el.className = `li ${cls}`;
+  el.innerHTML = `<span class="ts">${time}</span><span class="ag">${ev.agent_id || 'sys'}</span> ${detail}`;
+  list.prepend(el);
+  if (list.children.length > 40) list.lastChild.remove();
+}
+
+// ============================================================
+// SIMULATION CONTROL
+// ============================================================
+async function startSim() {
+  const scenario = document.getElementById('scenario').value;
+  try {
+    let url = `${API}/api/simulation/start?steps=100&speed=2`;
+    if (scenario !== 'normal') url += `&preset=${scenario}`;
+    await fetch(url, { method: 'POST' });
+    simRunning = true;
+    document.getElementById('sd').className = 'dot sim';
+    document.getElementById('st').textContent = 'SIMULATING';
+    document.getElementById('bGo').style.display = 'none';
+    document.getElementById('bStop').style.display = 'inline-block';
+  } catch(e) {
+    alert('Start failed: ' + e.message);
+  }
+}
+
+async function stopSim() {
+  try {
+    await fetch(`${API}/api/simulation/stop`, { method: 'POST' });
+    simRunning = false;
+    document.getElementById('sd').className = 'dot on';
+    document.getElementById('st').textContent = 'LIVE';
+    document.getElementById('bGo').style.display = 'inline-block';
+    document.getElementById('bStop').style.display = 'none';
+  } catch {}
+}
+
+// ============================================================
+// BOOT
+// ============================================================
+init();
+updateSignalDisplay();
+</script>
+</body>
+</html>

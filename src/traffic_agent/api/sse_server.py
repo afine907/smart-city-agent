@@ -58,8 +58,14 @@ def _serve_html(filename: str, title: str = "Dashboard") -> HTMLResponse:
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serve the Canvas 2D dashboard HTML page."""
-    return _serve_html("dashboard_canvas.html", "Dashboard")
+    """Serve the Tesla-style intersection dashboard."""
+    return _serve_html("dashboard_tesla.html", "Dashboard")
+
+
+@app.get("/dashboard/canvas", response_class=HTMLResponse)
+async def serve_dashboard_canvas():
+    """Serve the Canvas 2D dashboard."""
+    return _serve_html("dashboard_canvas.html", "Canvas Dashboard")
 
 
 @app.get("/dashboard/3d", response_class=HTMLResponse)
