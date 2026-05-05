@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from traffic_agent.visualization.events import EventCollector, EventType, SSEEvent
@@ -48,48 +49,19 @@ def _get_vis_dir() -> Path:
     return vis_dir
 
 
-def _serve_html(filename: str, title: str = "Dashboard") -> HTMLResponse:
-    """Serve an HTML file from the visualization directory."""
-    path = _get_vis_dir() / filename
-    if path.exists():
-        return HTMLResponse(content=path.read_text(encoding="utf-8"))
-    return HTMLResponse(content=f"<h1>{title} not found</h1>", status_code=404)
+def _get_dashboard_build_dir() -> Path:
+    """Resolve the Vite build output directory."""
+    return _get_vis_dir() / "dashboard_build"
 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serve the Tesla-style intersection dashboard."""
-    return _serve_html("dashboard_tesla.html", "Dashboard")
-
-
-@app.get("/dashboard/canvas", response_class=HTMLResponse)
-async def serve_dashboard_canvas():
-    """Serve the Canvas 2D dashboard."""
-    return _serve_html("dashboard_canvas.html", "Canvas Dashboard")
-
-
-@app.get("/dashboard/3d", response_class=HTMLResponse)
-async def serve_dashboard_3d():
-    """Serve the legacy 3D dashboard."""
-    return _serve_html("dashboard_3d.html", "3D Dashboard")
-
-
-@app.get("/dashboard/city", response_class=HTMLResponse)
-async def serve_dashboard_city():
-    """Serve the 3D city dashboard."""
-    return _serve_html("dashboard_3d_city.html", "3D City")
-
-
-@app.get("/dashboard/map", response_class=HTMLResponse)
-async def serve_dashboard_map():
-    """Serve the map-based dashboard with real OSM tiles."""
-    return _serve_html("dashboard_map.html", "Map Dashboard")
-
-
-@app.get("/dashboard/classic", response_class=HTMLResponse)
-async def serve_dashboard_classic():
-    """Serve the classic SVG dashboard."""
-    return _serve_html("dashboard.html", "Classic Dashboard")
+    """Serve the React dashboard (Vite build output)."""
+    build_dir = _get_dashboard_build_dir()
+    index_path = build_dir / "index.html"
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>Dashboard not built. Run: cd dashboard && npm run build</h1>", status_code=404)
 
 
 @app.get("/api/events/stream")
@@ -323,3 +295,9 @@ async def _run_simulation(steps: int, speed: float, preset: str | None = None):
         )
     finally:
         _simulation_running = False
+
+
+# Mount static files for Vite build output (must be after all routes)
+_build_dir = _get_vis_dir() / "dashboard_build"
+if _build_dir.exists():
+    app.mount("/assets", StaticFiles(directory=str(_build_dir / "assets")), name="dashboard-assets")

@@ -145,9 +145,14 @@ def run_simulate(args) -> None:
 
 def run_simulation(args) -> None:
     """Run traffic simulation with LLM agents."""
+    import threading
+    from traffic_agent.api.sse_server import get_collector
+
     print("🚦 LLM Traffic Controller")
     print("=" * 50)
-    
+
+    collector = get_collector()
+
     # Create simulation
     if args.scenario == "single":
         engine = create_single()
@@ -160,13 +165,13 @@ def run_simulation(args) -> None:
     else:
         print(f"Unknown scenario: {args.scenario}")
         sys.exit(1)
-    
+
     # Configure LLM
     llm_config = LLMConfig(
         fast_model=args.model,
         api_key=args.api_key,
     )
-    
+
     crew_config = CrewConfig(
         llm=llm_config,
         decision_interval=args.interval,
@@ -174,32 +179,54 @@ def run_simulation(args) -> None:
         use_cache=not args.no_cache,
         enable_coordination=not args.no_coordination,
     )
-    
-    # Create crew
-    crew = TrafficControlCrew(intersection_ids, graph, crew_config)
-    
+
+    # Create crew with SSE collector
+    crew = TrafficControlCrew(intersection_ids, graph, crew_config, collector=collector)
+
+    # Start SSE server if --port is specified
+    if args.port:
+        import uvicorn
+        from traffic_agent.api.sse_server import app
+        import traffic_agent.api.sse_server as srv
+
+        srv._network_topology = {
+            "type": f"grid_3x3",
+            "intersections": {
+                f"ix_{r}_{c}": {"row": r, "col": c}
+                for r in range(3) for c in range(3)
+            },
+            "segments": {},
+        }
+
+        def run_server():
+            uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
+
+        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_thread.start()
+        print(f"🌐 Dashboard: http://localhost:{args.port}")
+
     print(f"📊 Scenario: {args.scenario}")
     print(f"🤖 Intersections: {len(intersection_ids)}")
     print(f"🧠 Model: {args.model}")
     print(f"⏱️  Steps: {args.steps}")
     print(f"🔄 Decision interval: {args.interval}s")
     print()
-    
+
     # Run simulation loop
     for step in range(args.steps):
         # Advance simulation
         engine.step()
-        
+
         # LLM agents decide (at specified intervals)
         if step % max(1, int(args.interval)) == 0:
             decisions = crew.step(engine)
-            
+
             if args.verbose and decisions:
                 for d in decisions:
                     print(f"  🚦 {d['intersection_id']}: "
                           f"{d['phase']} {d['duration']}s — "
                           f"{d['reasoning'][:60]}...")
-        
+
         # Progress
         if step % 100 == 0:
             metrics = engine._get_metrics()
@@ -211,22 +238,22 @@ def run_simulation(args) -> None:
                 f"Calls: {crew_metrics['total_llm_calls']} | "
                 f"Cache: {crew_metrics['cache_hit_rate']:.0%}"
             )
-    
+
     # Final results
     print()
     print("=" * 50)
     print("📈 Final Results")
     print("=" * 50)
-    
+
     metrics = engine._get_metrics()
     crew_metrics = crew.get_metrics()
-    
+
     for key, value in metrics.items():
         if isinstance(value, float):
             print(f"  {key}: {value:.2f}")
         else:
             print(f"  {key}: {value}")
-    
+
     print()
     print("💰 LLM Usage")
     for key, value in crew_metrics.items():
@@ -237,7 +264,7 @@ def run_simulation(args) -> None:
             print(f"  {key}: {value:.4f}")
         else:
             print(f"  {key}: {value}")
-    
+
     # Show reasoning samples
     if args.verbose:
         print()
@@ -635,6 +662,8 @@ def main():
     run_parser.add_argument("--no-cache", action="store_true", help="Disable cache")
     run_parser.add_argument("--no-coordination", action="store_true",
                            help="Disable coordination")
+    run_parser.add_argument("--port", type=int, default=None,
+                           help="Start SSE dashboard server on this port")
     run_parser.set_defaults(func=run_simulation)
     
     # Compare command
