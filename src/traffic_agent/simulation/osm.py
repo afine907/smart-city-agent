@@ -389,6 +389,7 @@ class OSMNetwork:
 # ─── Preset Networks ──────────────────────────────────────
 
 # Small test network (for unit tests and quick demos)
+# Roads are bidirectional (oneway=False) to match real city traffic
 SMALL_MANHATTAN = {
     "intersections": {
         "ix_1_1": {"lat": 40.7580, "lon": -73.9855, "neighbors": ["ix_1_2", "ix_2_1"], "roads": ["7th Ave"], "speed_limit": 40.0},
@@ -402,18 +403,18 @@ SMALL_MANHATTAN = {
         "ix_3_3": {"lat": 40.7540, "lon": -73.9805, "neighbors": ["ix_2_3", "ix_3_2"], "roads": ["34th St"], "speed_limit": 40.0},
     },
     "roads": {
-        "r_1": {"from": "ix_1_1", "to": "ix_1_2", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": True},
-        "r_2": {"from": "ix_1_2", "to": "ix_1_3", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "Broadway", "oneway": True},
-        "r_3": {"from": "ix_2_1", "to": "ix_2_2", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "42nd St", "oneway": True},
-        "r_4": {"from": "ix_2_2", "to": "ix_2_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "42nd St", "oneway": True},
-        "r_5": {"from": "ix_3_1", "to": "ix_3_2", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "34th St", "oneway": True},
-        "r_6": {"from": "ix_3_2", "to": "ix_3_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "34th St", "oneway": True},
-        "r_7": {"from": "ix_1_1", "to": "ix_2_1", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": True},
-        "r_8": {"from": "ix_2_1", "to": "ix_3_1", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": True},
-        "r_9": {"from": "ix_1_2", "to": "ix_2_2", "length": 220, "speed_limit": 30.0, "lanes": 4, "name": "Times Square", "oneway": True},
-        "r_10": {"from": "ix_2_2", "to": "ix_3_2", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": True},
-        "r_11": {"from": "ix_1_3", "to": "ix_2_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "Broadway", "oneway": True},
-        "r_12": {"from": "ix_2_3", "to": "ix_3_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "Broadway", "oneway": True},
+        "r_1": {"from": "ix_1_1", "to": "ix_1_2", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": False},
+        "r_2": {"from": "ix_1_2", "to": "ix_1_3", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "Broadway", "oneway": False},
+        "r_3": {"from": "ix_2_1", "to": "ix_2_2", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "42nd St", "oneway": False},
+        "r_4": {"from": "ix_2_2", "to": "ix_2_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "42nd St", "oneway": False},
+        "r_5": {"from": "ix_3_1", "to": "ix_3_2", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "34th St", "oneway": False},
+        "r_6": {"from": "ix_3_2", "to": "ix_3_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "34th St", "oneway": False},
+        "r_7": {"from": "ix_1_1", "to": "ix_2_1", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": False},
+        "r_8": {"from": "ix_2_1", "to": "ix_3_1", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": False},
+        "r_9": {"from": "ix_1_2", "to": "ix_2_2", "length": 220, "speed_limit": 30.0, "lanes": 4, "name": "Times Square", "oneway": False},
+        "r_10": {"from": "ix_2_2", "to": "ix_3_2", "length": 220, "speed_limit": 40.0, "lanes": 3, "name": "7th Ave", "oneway": False},
+        "r_11": {"from": "ix_1_3", "to": "ix_2_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "Broadway", "oneway": False},
+        "r_12": {"from": "ix_2_3", "to": "ix_3_3", "length": 220, "speed_limit": 40.0, "lanes": 2, "name": "Broadway", "oneway": False},
     },
 }
 
@@ -428,13 +429,13 @@ WUHAN_OPTICS_VALLEY = {
         "guanggu_6": {"lat": 30.5040, "lon": 114.4022, "neighbors": ["guanggu_3", "guanggu_5"], "roads": ["关山路"], "speed_limit": 50.0},
     },
     "roads": {
-        "g_1": {"from": "guanggu_1", "to": "guanggu_2", "length": 280, "speed_limit": 60.0, "lanes": 4, "name": "珞瑜路", "oneway": True},
-        "g_2": {"from": "guanggu_2", "to": "guanggu_3", "length": 280, "speed_limit": 60.0, "lanes": 4, "name": "珞瑜路", "oneway": True},
-        "g_3": {"from": "guanggu_1", "to": "guanggu_4", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "民族大道", "oneway": True},
-        "g_4": {"from": "guanggu_2", "to": "guanggu_5", "length": 280, "speed_limit": 40.0, "lanes": 3, "name": "光谷广场", "oneway": True},
-        "g_5": {"from": "guanggu_3", "to": "guanggu_6", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "关山路", "oneway": True},
-        "g_6": {"from": "guanggu_4", "to": "guanggu_5", "length": 280, "speed_limit": 40.0, "lanes": 3, "name": "光谷广场", "oneway": True},
-        "g_7": {"from": "guanggu_5", "to": "guanggu_6", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "关山路", "oneway": True},
+        "g_1": {"from": "guanggu_1", "to": "guanggu_2", "length": 280, "speed_limit": 60.0, "lanes": 4, "name": "珞瑜路", "oneway": False},
+        "g_2": {"from": "guanggu_2", "to": "guanggu_3", "length": 280, "speed_limit": 60.0, "lanes": 4, "name": "珞瑜路", "oneway": False},
+        "g_3": {"from": "guanggu_1", "to": "guanggu_4", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "民族大道", "oneway": False},
+        "g_4": {"from": "guanggu_2", "to": "guanggu_5", "length": 280, "speed_limit": 40.0, "lanes": 3, "name": "光谷广场", "oneway": False},
+        "g_5": {"from": "guanggu_3", "to": "guanggu_6", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "关山路", "oneway": False},
+        "g_6": {"from": "guanggu_4", "to": "guanggu_5", "length": 280, "speed_limit": 40.0, "lanes": 3, "name": "光谷广场", "oneway": False},
+        "g_7": {"from": "guanggu_5", "to": "guanggu_6", "length": 280, "speed_limit": 50.0, "lanes": 3, "name": "关山路", "oneway": False},
     },
 }
 
@@ -499,51 +500,51 @@ SHENZHEN_LIUXIANDONG = {
     "roads": {
         "lxd_r1": {
             "from": "lxd_1", "to": "lxd_2", "length": 350,
-            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": True,
+            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": False,
         },
         "lxd_r2": {
             "from": "lxd_2", "to": "lxd_3", "length": 350,
-            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": True,
+            "speed_limit": 60.0, "lanes": 6, "name": "留仙大道", "oneway": False,
         },
         "lxd_r3": {
             "from": "lxd_1", "to": "lxd_4", "length": 330,
-            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": True,
+            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": False,
         },
         "lxd_r4": {
             "from": "lxd_2", "to": "lxd_5", "length": 330,
-            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": True,
+            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": False,
         },
         "lxd_r5": {
             "from": "lxd_3", "to": "lxd_6", "length": 330,
-            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": False,
         },
         "lxd_r6": {
             "from": "lxd_4", "to": "lxd_5", "length": 350,
-            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": True,
+            "speed_limit": 40.0, "lanes": 4, "name": "南光高速", "oneway": False,
         },
         "lxd_r7": {
             "from": "lxd_5", "to": "lxd_6", "length": 350,
-            "speed_limit": 40.0, "lanes": 2, "name": "同发路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "同发路", "oneway": False,
         },
         "lxd_r8": {
             "from": "lxd_4", "to": "lxd_7", "length": 330,
-            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": True,
+            "speed_limit": 50.0, "lanes": 3, "name": "西丽路", "oneway": False,
         },
         "lxd_r9": {
             "from": "lxd_5", "to": "lxd_8", "length": 330,
-            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": False,
         },
         "lxd_r10": {
             "from": "lxd_6", "to": "lxd_9", "length": 330,
-            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": False,
         },
         "lxd_r11": {
             "from": "lxd_7", "to": "lxd_8", "length": 350,
-            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "宝珠路", "oneway": False,
         },
         "lxd_r12": {
             "from": "lxd_8", "to": "lxd_9", "length": 350,
-            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": True,
+            "speed_limit": 40.0, "lanes": 2, "name": "打石一路", "oneway": False,
         },
     },
 }

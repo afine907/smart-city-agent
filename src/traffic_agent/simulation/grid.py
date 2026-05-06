@@ -10,6 +10,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from traffic_agent.simulation.engine import (
+    GREEN_APPROACHES,
+    PHASE_DURATIONS,
+    SIGNAL_PHASES,
     Intersection,
     RoadNetwork,
     SimulationConfig,
@@ -33,44 +36,44 @@ class RoadSegment:
 class GridSimulation:
     """
     3x3 grid traffic simulation.
-    
+
     Layout:
         ix_0_0 --- ix_0_1 --- ix_0_2
           |          |          |
         ix_1_0 --- ix_1_1 --- ix_1_2
           |          |          |
         ix_2_0 --- ix_2_1 --- ix_2_2
-    
+
     Vehicles:
     - Generated at boundary intersections
     - Flow through the grid
     - Exit at boundary intersections
     """
-    
+
     def __init__(self, config: Optional[SimulationConfig] = None):
         self.config = config or SimulationConfig()
         self.rows = 3
         self.cols = 3
         self.time: float = 0.0
         self.step_count: int = 0
-        
+
         # Road network
         self.intersections: Dict[str, Intersection] = {}
         self.segments: Dict[str, RoadSegment] = {}
-        
+
         # Metrics
         self.total_vehicles_generated = 0
         self.total_vehicles_completed = 0
         self.total_wait_time = 0.0
-        
+
         # Vehicle ID counter
         self._vehicle_counter = 0
-        
+
         if self.config.seed is not None:
             np.random.seed(self.config.seed)
-        
+
         self._build_grid()
-    
+
     def _build_grid(self) -> None:
         """Build the 3x3 grid network."""
         # Create intersections
@@ -78,7 +81,7 @@ class GridSimulation:
             for col in range(self.cols):
                 ix_id = f"ix_{row}_{col}"
                 self.intersections[ix_id] = Intersection(id=ix_id)
-        
+
         # Create road segments (horizontal)
         for row in range(self.rows):
             for col in range(self.cols - 1):
@@ -86,7 +89,7 @@ class GridSimulation:
                 to_id = f"ix_{row}_{col+1}"
                 key = f"{from_id}->{to_id}"
                 self.segments[key] = RoadSegment(from_id=from_id, to_id=to_id)
-        
+
         # Create road segments (vertical)
         for row in range(self.rows - 1):
             for col in range(self.cols):
@@ -94,26 +97,26 @@ class GridSimulation:
                 to_id = f"ix_{row+1}_{col}"
                 key = f"{from_id}->{to_id}"
                 self.segments[key] = RoadSegment(from_id=from_id, to_id=to_id)
-    
+
     def get_neighbors(self, ix_id: str) -> List[str]:
         """Get neighbor intersection IDs."""
         row, col = self._parse_id(ix_id)
         neighbors = []
-        
+
         if col > 0: neighbors.append(f"ix_{row}_{col-1}")
         if col < self.cols - 1: neighbors.append(f"ix_{row}_{col+1}")
         if row > 0: neighbors.append(f"ix_{row-1}_{col}")
         if row < self.rows - 1: neighbors.append(f"ix_{row+1}_{col}")
-        
+
         return neighbors
-    
+
     def get_graph(self) -> Dict[str, List[str]]:
         """Get adjacency list for all intersections."""
         return {
             ix_id: self.get_neighbors(ix_id)
             for ix_id in self.intersections
         }
-    
+
     def get_state(self, ix_id: str) -> IntersectionState:
         """Get current state for an intersection."""
         ix = self.intersections[ix_id]
@@ -143,16 +146,6 @@ class GridSimulation:
                 if emergency:
                     break
 
-        # Emergency triggers immediate phase change
-        if emergency and emergency_approach is not None:
-            if emergency_approach in [0, 2]:
-                target_phase = "NS_GREEN"
-            else:
-                target_phase = "EW_GREEN"
-            if ix.current_phase != target_phase:
-                ix.current_phase = target_phase
-                ix.phase_timer = 0.0
-
         return IntersectionState(
             intersection_id=ix_id,
             timestamp=self.time,
@@ -169,16 +162,16 @@ class GridSimulation:
             emergency=emergency,
             emergency_approach=emergency_approach,
         )
-    
+
     def apply_decision(self, ix_id: str, decision: Dict) -> None:
         """Apply LLM decision to intersection."""
         ix = self.intersections[ix_id]
         new_phase = decision.get("phase", ix.current_phase)
-        
+
         if new_phase != ix.current_phase:
             ix.current_phase = new_phase
             ix.phase_timer = 0.0
-    
+
     def step(self) -> None:
         """Advance simulation by one time step."""
         dt = self.config.dt
@@ -186,16 +179,20 @@ class GridSimulation:
         # 1. Generate vehicles at boundaries
         self._generate_boundary_vehicles(dt)
 
-        # 2. Move vehicles through segments (includes intersection routing)
+        # 2. Update signal phases (auto-cycle with yellow/all-red)
+        for ix in self.intersections.values():
+            self._update_signal(ix, dt)
+
+        # 3. Move vehicles through segments (includes intersection routing)
         self._move_vehicles(dt)
 
-        # 3. Update signal timers
+        # 4. Update signal timers
         for ix in self.intersections.values():
             ix.phase_timer += dt
 
         self.time += dt
         self.step_count += 1
-    
+
     def get_metrics(self) -> Dict[str, float]:
         """Get simulation metrics."""
         total_queue = sum(
@@ -203,15 +200,15 @@ class GridSimulation:
             for ix_id in self.intersections
             for a in range(4)
         )
-        
+
         total_waiting = sum(
             self._count_waiting(ix_id, a)
             for ix_id in self.intersections
             for a in range(4)
         )
-        
+
         avg_wait = self.total_wait_time / max(1, self.total_vehicles_completed)
-        
+
         return {
             "time": self.time,
             "total_queue": total_queue,
@@ -221,7 +218,7 @@ class GridSimulation:
             "avg_wait_time": avg_wait,
             "throughput": self.total_vehicles_completed / max(1, self.time),
         }
-    
+
     def reset(self) -> None:
         """Reset simulation."""
         self.time = 0.0
@@ -230,22 +227,33 @@ class GridSimulation:
         self.total_vehicles_generated = 0
         self.total_vehicles_completed = 0
         self.total_wait_time = 0.0
-        
+
         for ix in self.intersections.values():
             ix.vehicles.clear()
             ix.current_phase = "NS_GREEN"
             ix.phase_timer = 0.0
-        
+
         for seg in self.segments.values():
             seg.vehicles.clear()
-    
+
     # ─── Private Methods ───────────────────────────────────────
-    
+
     def _parse_id(self, ix_id: str) -> Tuple[int, int]:
         """Parse intersection ID to (row, col)."""
         parts = ix_id.split("_")
         return int(parts[1]), int(parts[2])
-    
+
+    def _update_signal(self, ix: Intersection, dt: float) -> None:
+        """Auto-cycle signal phases with yellow and all-red transitions."""
+        phase = ix.current_phase
+        max_duration = PHASE_DURATIONS.get(phase, 30.0)
+
+        if ix.phase_timer >= max_duration:
+            idx = SIGNAL_PHASES.index(phase)
+            next_idx = (idx + 1) % len(SIGNAL_PHASES)
+            ix.current_phase = SIGNAL_PHASES[next_idx]
+            ix.phase_timer = 0.0
+
     def _generate_boundary_vehicles(self, dt: float) -> None:
         """Generate vehicles at boundary intersections."""
         boundaries = [
@@ -257,26 +265,26 @@ class GridSimulation:
         ] + [
             (row, self.cols - 1) for row in range(1, self.rows - 1)  # Right column
         ]
-        
+
         for row, col in boundaries:
             if np.random.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
                 self.total_vehicles_generated += 1
-                
+
                 # Random destination
                 dest_row = np.random.randint(0, self.rows)
                 dest_col = np.random.randint(0, self.cols)
-                
+
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=np.random.randint(0, 4),
                     position=self.config.road_length,
                     speed=self.config.speed_limit,
                 )
-                
+
                 # Add to segment approaching this intersection
                 self._add_vehicle_to_segment(row, col, v)
-    
+
     def _add_vehicle_to_segment(self, row: int, col: int, vehicle: Vehicle) -> None:
         """Add vehicle to a segment approaching the intersection."""
         # Find an incoming segment
@@ -289,12 +297,12 @@ class GridSimulation:
             candidates.append(f"ix_{row}_{col-1}->ix_{row}_{col}")
         if col < self.cols - 1:  # From east
             candidates.append(f"ix_{row}_{col+1}->ix_{row}_{col}")
-        
+
         if candidates:
             seg_key = np.random.choice(candidates)
             if seg_key in self.segments:
                 self.segments[seg_key].vehicles.append(vehicle)
-    
+
     def _move_vehicles(self, dt: float) -> None:
         """Move vehicles through road segments, routing at intersections."""
         for seg_key, seg in self.segments.items():
@@ -351,7 +359,7 @@ class GridSimulation:
 
             for i in sorted(to_remove, reverse=True):
                 seg.vehicles.pop(i)
-    
+
     def _route_vehicle(self, from_id: str, vehicle: Vehicle) -> Optional[str]:
         """Route vehicle to next segment. Returns segment key or None if completed."""
         from_row, from_col = self._parse_id(from_id)
@@ -399,15 +407,12 @@ class GridSimulation:
             return new_key
 
         return None
-    
+
     def _has_green(self, ix: Intersection, approach: int) -> bool:
         """Check if approach has green light."""
-        if ix.current_phase == "NS_GREEN":
-            return approach in [0, 2]  # N, S
-        elif ix.current_phase == "EW_GREEN":
-            return approach in [1, 3]  # E, W
-        return False
-    
+        green_list = GREEN_APPROACHES.get(ix.current_phase, [])
+        return approach in green_list
+
     def _count_approaching(self, ix_id: str, approach: int) -> int:
         """Count vehicles approaching from a direction."""
         count = 0
@@ -418,7 +423,7 @@ class GridSimulation:
                     if v.approach == approach:
                         count += 1
         return count
-    
+
     def _count_waiting(self, ix_id: str, approach: int) -> int:
         """Count vehicles waiting at intersection."""
         count = 0

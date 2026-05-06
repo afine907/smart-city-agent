@@ -38,6 +38,30 @@ class Vehicle:
     is_emergency: bool = False
 
 
+# Standard 4-phase signal cycle with yellow and all-red transitions
+SIGNAL_PHASES = ["NS_GREEN", "NS_YELLOW", "ALL_RED_1", "EW_GREEN", "EW_YELLOW", "ALL_RED_2"]
+
+# Phase durations (seconds) for automatic cycling
+PHASE_DURATIONS = {
+    "NS_GREEN": 30.0,
+    "NS_YELLOW": 3.0,
+    "ALL_RED_1": 2.0,
+    "EW_GREEN": 30.0,
+    "EW_YELLOW": 3.0,
+    "ALL_RED_2": 2.0,
+}
+
+# Approaches that get green in each phase
+GREEN_APPROACHES = {
+    "NS_GREEN": [0, 2],      # N, S
+    "NS_YELLOW": [],          # All red (yellow = clearing)
+    "ALL_RED_1": [],          # All red
+    "EW_GREEN": [1, 3],      # E, W
+    "EW_YELLOW": [],          # All red (yellow = clearing)
+    "ALL_RED_2": [],          # All red
+}
+
+
 @dataclass
 class Intersection:
     """Intersection in the road network."""
@@ -50,13 +74,13 @@ class Intersection:
     )
     total_wait_time: float = 0.0
     total_served: int = 0
-    
+
     def get_queue(self, approach: int) -> int:
         return sum(1 for v in self.vehicles[approach] if v.waiting)
-    
+
     def get_total_queue(self) -> int:
         return sum(self.get_queue(a) for a in range(self.approaches))
-    
+
     def get_wait_time(self, approach: int) -> float:
         waiting = [v for v in self.vehicles[approach] if v.waiting]
         return len(waiting) * 2.0  # Approximate: 2s per waiting vehicle
@@ -152,17 +176,20 @@ class SimulationEngine:
     def step(self) -> None:
         """Advance simulation by one time step."""
         dt = self.config.dt
-        
+
         for ix in self.network.intersections.values():
             # Generate vehicles
             self._generate_vehicles(ix, dt)
-            
+
+            # Update signal phase (auto-cycle through yellow/all-red)
+            self._update_signal(ix, dt)
+
             # Update vehicles
             self._update_vehicles(ix, dt)
-            
+
             # Update signal timer
             ix.phase_timer += dt
-        
+
         self.time += dt
         self.step_count += 1
     
@@ -180,14 +207,14 @@ class SimulationEngine:
         self.time = 0.0
         self.step_count = 0
         self._vehicle_counter = 0
-        
+
         for ix in self.network.intersections.values():
             ix.vehicles.clear()
             ix.current_phase = "NS_GREEN"
             ix.phase_timer = 0.0
             ix.total_wait_time = 0.0
             ix.total_served = 0
-    
+
     def _generate_vehicles(self, ix: Intersection, dt: float) -> None:
         for approach in range(ix.approaches):
             if np.random.random() < self.config.arrival_rate * dt:
@@ -232,11 +259,20 @@ class SimulationEngine:
     
     def _has_green(self, ix: Intersection, approach: int) -> bool:
         """Check if approach has green light."""
-        if ix.current_phase == "NS_GREEN":
-            return approach in [0, 2]  # N, S
-        elif ix.current_phase == "EW_GREEN":
-            return approach in [1, 3]  # E, W
-        return False  # Yellow
+        green_list = GREEN_APPROACHES.get(ix.current_phase, [])
+        return approach in green_list
+
+    def _update_signal(self, ix: Intersection, dt: float) -> None:
+        """Auto-cycle signal phases with yellow and all-red transitions."""
+        phase = ix.current_phase
+        max_duration = PHASE_DURATIONS.get(phase, 30.0)
+
+        if ix.phase_timer >= max_duration:
+            # Advance to next phase in cycle
+            idx = SIGNAL_PHASES.index(phase)
+            next_idx = (idx + 1) % len(SIGNAL_PHASES)
+            ix.current_phase = SIGNAL_PHASES[next_idx]
+            ix.phase_timer = 0.0
 
     def _handle_emergency(self, ix: Intersection, approach: int) -> None:
         """Handle emergency vehicle — force green for its approach."""

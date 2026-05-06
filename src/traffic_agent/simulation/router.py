@@ -41,16 +41,11 @@ class RoutePlanner:
         self._path_cache = {}
         
         for seg in segments.values():
-            # Forward edge (one-way or bidirectional)
+            # Only add forward edge — reverse segments are explicit
+            # (e.g., r_7_rev provides the reverse direction for r_7)
             if seg.from_id not in self._adjacency:
                 self._adjacency[seg.from_id] = []
             self._adjacency[seg.from_id].append((seg.to_id, seg.length, seg.road_id))
-            
-            # Bidirectional roads get reverse edge too
-            if not seg.oneway:
-                if seg.to_id not in self._adjacency:
-                    self._adjacency[seg.to_id] = []
-                self._adjacency[seg.to_id].append((seg.from_id, seg.length, seg.road_id))
     
     def shortest_path(self, start: str, end: str) -> Optional[List[str]]:
         """

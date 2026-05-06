@@ -5,11 +5,19 @@ Extends the grid simulation concept to work with arbitrary road network
 topologies loaded from OSM data.
 """
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from traffic_agent.simulation.engine import Intersection, SimulationConfig, Vehicle
+from traffic_agent.simulation.engine import (
+    GREEN_APPROACHES,
+    PHASE_DURATIONS,
+    SIGNAL_PHASES,
+    Intersection,
+    SimulationConfig,
+    Vehicle,
+)
 from traffic_agent.simulation.osm import OSMNetwork
 from traffic_agent.simulation.router import RoutePlanner
 from traffic_agent.tools.traffic_tools import IntersectionState
@@ -143,21 +151,45 @@ class OSMSimulation:
                 oneway=osm_road.oneway,
             )
 
+            # For bidirectional roads, create a reverse segment
+            if not osm_road.oneway:
+                reverse_id = f"{road_id}_rev"
+                self.segments[reverse_id] = OSMSegment(
+                    road_id=reverse_id,
+                    from_id=osm_road.to_intersection,
+                    to_id=osm_road.from_intersection,
+                    length=osm_road.length,
+                    speed_limit=speed_ms,
+                    lanes=osm_road.lanes,
+                    name=osm_road.name,
+                    oneway=False,
+                )
+
         # Identify boundary intersections:
-        # - Source: has outgoing but no/few incoming roads (vehicles enter here)
-        # - Sink: has incoming but no/few outgoing roads (vehicles exit here)
+        # For bidirectional roads, all intersections may have >=2 in/out.
+        # Instead, identify boundaries as intersections with fewer total connections
+        # (edge/corner of the network) or those at the network perimeter.
         incoming_count = {}
         outgoing_count = {}
         for seg in self.segments.values():
+            if seg.road_id.startswith("virtual"):
+                continue
             outgoing_count[seg.from_id] = outgoing_count.get(seg.from_id, 0) + 1
             incoming_count[seg.to_id] = incoming_count.get(seg.to_id, 0) + 1
 
         all_ids = set(self.intersections.keys())
+        max_connections = max(
+            incoming_count.get(ix_id, 0) + outgoing_count.get(ix_id, 0)
+            for ix_id in all_ids
+        ) if all_ids else 0
+
         for ix_id in all_ids:
             inc = incoming_count.get(ix_id, 0)
             out = outgoing_count.get(ix_id, 0)
-            # Boundary: fewer than 2 incoming (source) OR fewer than 2 outgoing (sink)
-            if inc < 2 or out < 2:
+            total = inc + out
+            # Boundary: fewer connections than max (edge of network)
+            # or fewer than 2 incoming/outgoing (asymmetric)
+            if total < max_connections or inc < 2 or out < 2:
                 self.boundary_intersections.add(ix_id)
 
         # Build route planner graph
@@ -193,7 +225,7 @@ class OSMSimulation:
         }
 
     def get_state(self, ix_id: str) -> IntersectionState:
-        """Get current state for an intersection."""
+        """Get current state for an intersection. Pure getter, no side effects."""
         ix = self.intersections.get(ix_id)
         if ix is None:
             return IntersectionState(intersection_id=ix_id, timestamp=self.time)
@@ -209,7 +241,7 @@ class OSMSimulation:
         wait_east = self._count_waiting(ix_id, 1) * 2.0
         wait_west = self._count_waiting(ix_id, 3) * 2.0
 
-        # Check for emergency vehicles
+        # Check for emergency vehicles (read-only)
         emergency = False
         emergency_approach = None
         for seg in self.segments.values():
@@ -217,18 +249,10 @@ class OSMSimulation:
                 for v in seg.vehicles:
                     if v.is_emergency:
                         emergency = True
-                        # Determine approach from road direction
                         emergency_approach = self._road_to_approach(seg.from_id, ix_id)
                         break
                 if emergency:
                     break
-
-        # Emergency triggers immediate phase change
-        if emergency and emergency_approach is not None:
-            target_phase = "NS_GREEN" if emergency_approach in [0, 2] else "EW_GREEN"
-            if ix.current_phase != target_phase:
-                ix.current_phase = target_phase
-                ix.phase_timer = 0.0
 
         return IntersectionState(
             intersection_id=ix_id,
@@ -265,13 +289,17 @@ class OSMSimulation:
         # 1. Generate vehicles at boundary intersections
         self._generate_boundary_vehicles(dt)
 
-        # 2. Move vehicles through segments
+        # 2. Update signal phases (auto-cycle with yellow/all-red)
+        for ix in self.intersections.values():
+            self._update_signal(ix, dt)
+
+        # 3. Move vehicles through segments
         self._move_vehicles(dt)
 
-        # 3. Process vehicles arriving at intersections
+        # 4. Process vehicles arriving at intersections
         self._process_intersections(dt)
 
-        # 4. Update signal timers
+        # 5. Update signal timers
         for ix in self.intersections.values():
             ix.phase_timer += dt
 
@@ -334,6 +362,7 @@ class OSMSimulation:
         """
         Determine the approach direction (0=N, 1=E, 2=S, 3=W)
         based on the relative positions of two intersections.
+        Uses atan2 for accurate bearing calculation on diagonal roads.
         """
         from_ix = self.osm.intersections.get(from_id)
         to_ix = self.osm.intersections.get(to_id)
@@ -345,11 +374,19 @@ class OSMSimulation:
         dlat = to_ix.lat - from_ix.lat
         dlon = to_ix.lon - from_ix.lon
 
-        # Simple cardinal direction based on dominant component
-        if abs(dlat) > abs(dlon):
-            return 0 if dlat > 0 else 2  # N or S
+        # atan2(dlon, dlat) gives bearing: 0=N, π/2=E, ±π=S, -π/2=W
+        bearing = math.atan2(dlon, dlat)
+
+        # Map bearing to closest cardinal direction (0=N, 1=E, 2=S, 3=W)
+        # Check wrap-around (South near ±π) first
+        if bearing >= 3 * math.pi / 4 or bearing < -3 * math.pi / 4:
+            return 2  # S (bearing near ±π: 135° to 225°)
+        elif bearing >= math.pi / 4:
+            return 1  # E (bearing π/4 to 3π/4: 45° to 135°)
+        elif bearing >= -math.pi / 4:
+            return 0  # N (bearing -π/4 to π/4: -45° to 45°)
         else:
-            return 1 if dlon > 0 else 3  # E or W
+            return 3  # W (bearing -3π/4 to -π/4: -135° to -45°)
 
     def _generate_boundary_vehicles(self, dt: float) -> None:
         """Generate vehicles at boundary intersections."""
@@ -381,16 +418,23 @@ class OSMSimulation:
                 self._add_vehicle_to_boundary(ix_id, v)
 
     def _add_vehicle_to_boundary(self, ix_id: str, vehicle: Vehicle) -> None:
-        """Add a vehicle approaching a boundary intersection."""
+        """Add a vehicle approaching a boundary intersection.
+
+        The vehicle's approach is set based on the actual direction of the
+        road segment it's on, so signal light checks work correctly.
+        """
         # Find segments that lead to this intersection
         incoming = [seg for seg in self.segments.values() if seg.to_id == ix_id]
 
         if incoming:
-            # Add to the shortest incoming segment
-            shortest = min(incoming, key=lambda s: s.length)
-            vehicle.position = shortest.length
-            vehicle.speed = shortest.speed_limit
-            shortest.vehicles.append(vehicle)
+            # Add to a random incoming segment
+            seg = incoming[np.random.randint(len(incoming))]
+            vehicle.position = seg.length
+            vehicle.speed = seg.speed_limit
+            # Set approach: direction FROM the intersection BACK to where the vehicle came from
+            # This tells the signal controller which side the vehicle is approaching from
+            vehicle.approach = self._road_to_approach(ix_id, seg.from_id)
+            seg.vehicles.append(vehicle)
         elif ix_id in self._virtual_segments:
             # Use pre-created virtual segment
             seg = self.segments[self._virtual_segments[ix_id]]
@@ -402,30 +446,27 @@ class OSMSimulation:
             self.total_vehicles_completed += 1
 
     def _move_vehicles(self, dt: float) -> None:
-        """Move vehicles through road segments."""
+        """Move vehicles through road segments.
+
+        Vehicles at position <= 5.0 are at the intersection and will be
+        handled by _process_intersections. This method only moves vehicles
+        that are still approaching (position > 5.0).
+        """
         for seg in self.segments.values():
             to_remove = []
 
             for i, v in enumerate(seg.vehicles):
-                at_intersection = v.position <= 5.0
-
-                if at_intersection:
-                    # Check if destination intersection has green
-                    to_ix = self.intersections.get(seg.to_id)
-                    if to_ix:
-                        has_green = self._has_green(to_ix, v.approach)
-                        if not has_green:
-                            v.speed = 0
-                            v.waiting = True
-                            self.total_wait_time += dt
-                            continue
+                # Skip vehicles at the intersection (handled by _process_intersections)
+                if v.position <= 5.0:
+                    continue
 
                 # Move forward
                 v.speed = seg.speed_limit
                 v.waiting = False
                 v.position -= v.speed * dt
 
-                # Vehicle reached end of segment
+                # Vehicle passed through intersection without being processed
+                # (shouldn't happen normally, but safety catch)
                 if v.position <= -5.0:
                     to_remove.append(i)
 
@@ -434,15 +475,43 @@ class OSMSimulation:
                 seg.vehicles.pop(i)
 
     def _process_intersections(self, dt: float) -> None:
-        """Process vehicles arriving at intersections."""
-        for ix_id, _ix in self.intersections.items():
-            for seg in self.segments.values():
-                if seg.to_id == ix_id:
-                    arriving = [v for v in seg.vehicles if v.position <= 5.0]
-                    for v in arriving:
-                        next_seg = self._route_vehicle(ix_id, v)
-                        if next_seg is None:
+        """Process vehicles arriving at intersections.
+
+        Vehicles at position <= 5.0 are at/through the intersection.
+        - If past intersection (position <= 0): must route or complete
+        - If at intersection with green: route to next segment
+        - If at intersection with red: wait
+        """
+        for seg in list(self.segments.values()):
+            to_remove = []
+            for i, v in enumerate(seg.vehicles):
+                if v.position <= 5.0:
+                    # Vehicle is at or past the intersection
+                    if v.position <= 0:
+                        # Already past the intersection — force route
+                        next_seg_id = self._route_vehicle(seg.to_id, v)
+                        if next_seg_id is None:
                             self.total_vehicles_completed += 1
+                        to_remove.append(i)
+                    else:
+                        # At intersection boundary — check signal
+                        to_ix = self.intersections.get(seg.to_id)
+                        if to_ix:
+                            has_green = self._has_green(to_ix, v.approach)
+                            if has_green:
+                                next_seg_id = self._route_vehicle(seg.to_id, v)
+                                if next_seg_id is None:
+                                    self.total_vehicles_completed += 1
+                                to_remove.append(i)
+                            else:
+                                # Red light — wait
+                                v.speed = 0
+                                v.waiting = True
+                                self.total_wait_time += dt
+
+            # Remove routed/completed vehicles from this segment
+            for i in sorted(to_remove, reverse=True):
+                seg.vehicles.pop(i)
 
     def _route_vehicle(self, from_id: str, vehicle: Vehicle) -> str | None:
         """
@@ -451,15 +520,21 @@ class OSMSimulation:
         """
         dest = self.vehicle_destinations.get(vehicle.id)
 
-        # If no destination or already at destination, pick random exit
-        if dest is None or dest == from_id:
+        # If already at destination, vehicle completes its journey
+        if dest is not None and dest == from_id:
+            self.vehicle_destinations.pop(vehicle.id, None)
+            return None
+
+        # If no destination set, pick random exit
+        if dest is None:
             self.vehicle_destinations.pop(vehicle.id, None)
             outgoing = [seg for seg in self.segments.values() if seg.from_id == from_id]
             if not outgoing:
                 return None
             next_seg = outgoing[np.random.randint(len(outgoing))]
             vehicle.position = next_seg.length
-            vehicle.approach = self._road_to_approach(from_id, next_seg.to_id)
+            # approach: direction from intersection back to vehicle origin
+            vehicle.approach = self._road_to_approach(next_seg.to_id, from_id)
             next_seg.vehicles.append(vehicle)
             return next_seg.road_id
 
@@ -473,7 +548,7 @@ class OSMSimulation:
                 return None
             next_seg = outgoing[np.random.randint(len(outgoing))]
             vehicle.position = next_seg.length
-            vehicle.approach = self._road_to_approach(from_id, next_seg.to_id)
+            vehicle.approach = self._road_to_approach(next_seg.to_id, from_id)
             next_seg.vehicles.append(vehicle)
             return next_seg.road_id
 
@@ -485,22 +560,26 @@ class OSMSimulation:
 
         next_seg = self.segments[edge_id]
         vehicle.position = next_seg.length
-        vehicle.approach = self._road_to_approach(from_id, next_node)
+        vehicle.approach = self._road_to_approach(next_node, from_id)
         next_seg.vehicles.append(vehicle)
-
-        # Clean up destination if arrived
-        if next_node == dest:
-            self.vehicle_destinations.pop(vehicle.id, None)
 
         return edge_id
 
+    def _update_signal(self, ix: Intersection, dt: float) -> None:
+        """Auto-cycle signal phases with yellow and all-red transitions."""
+        phase = ix.current_phase
+        max_duration = PHASE_DURATIONS.get(phase, 30.0)
+
+        if ix.phase_timer >= max_duration:
+            idx = SIGNAL_PHASES.index(phase)
+            next_idx = (idx + 1) % len(SIGNAL_PHASES)
+            ix.current_phase = SIGNAL_PHASES[next_idx]
+            ix.phase_timer = 0.0
+
     def _has_green(self, ix: Intersection, approach: int) -> bool:
         """Check if approach has green light."""
-        if ix.current_phase == "NS_GREEN":
-            return approach in [0, 2]
-        elif ix.current_phase == "EW_GREEN":
-            return approach in [1, 3]
-        return False
+        green_list = GREEN_APPROACHES.get(ix.current_phase, [])
+        return approach in green_list
 
     def _count_approaching(self, ix_id: str, approach: int) -> int:
         """Count vehicles approaching from a direction."""

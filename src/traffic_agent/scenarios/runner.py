@@ -43,6 +43,15 @@ class ScenarioRunner:
             sim.config.arrival_rate = config.arrival_rate
             sim.config.emergency_rate = config.emergency_rate
 
+            # Apply direction bias to boundary vehicle generation
+            bias = getattr(config, 'direction_bias', None)
+            if bias is not None:
+                ns_bias = (bias[0] + bias[2]) / 2.0
+                ew_bias = (bias[1] + bias[3]) / 2.0
+                avg_bias = (ns_bias + ew_bias) / 2.0
+                if avg_bias > 0:
+                    sim.config.arrival_rate *= avg_bias
+
             for _ in range(duration):
                 sim.step()
 
@@ -93,6 +102,15 @@ class ScenarioRunner:
         for config, duration in self.scenario.to_simulation_configs():
             sim.config.arrival_rate = config.arrival_rate
             sim.config.emergency_rate = config.emergency_rate
+
+            # Apply direction bias (from ScenarioConfig, not SimulationConfig)
+            bias = getattr(config, 'direction_bias', None)
+            if bias is not None:
+                ns_bias = (bias[0] + bias[2]) / 2.0
+                ew_bias = (bias[1] + bias[3]) / 2.0
+                avg_bias = (ns_bias + ew_bias) / 2.0
+                if avg_bias > 0:
+                    sim.config.arrival_rate *= avg_bias
 
             for _ in range(duration):
                 sim.step()
