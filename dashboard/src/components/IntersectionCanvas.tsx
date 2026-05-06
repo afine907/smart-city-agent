@@ -12,10 +12,11 @@ import { drawVehicle } from '../rendering/vehicles';
 interface Props {
   scenario: Scenario;
   controller?: SignalController | null;
+  running?: boolean;
   onMetrics?: (metrics: ReturnType<SimulationEngine['getMetrics']>) => void;
 }
 
-export function IntersectionCanvas({ scenario, controller, onMetrics }: Props) {
+export function IntersectionCanvas({ scenario, controller, running, onMetrics }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<SimulationEngine | null>(null);
   const frameRef = useRef<number>(0);
@@ -27,6 +28,14 @@ export function IntersectionCanvas({ scenario, controller, onMetrics }: Props) {
     engineRef.current = engine;
     return engine;
   }, [scenario]);
+
+  // Sync running state from parent to engine
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (engine) {
+      engine.state.running = running ?? false;
+    }
+  }, [running]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

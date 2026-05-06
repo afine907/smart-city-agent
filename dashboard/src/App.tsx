@@ -104,6 +104,7 @@ export default function App() {
         <IntersectionCanvas
           scenario={scenario}
           controller={controller}
+          running={running}
           onMetrics={handleMetrics}
         />
       </main>
