@@ -30,13 +30,13 @@ export function drawCrossroadMarkings(ctx: CanvasRenderingContext2D, cx: number,
   ctx.moveTo(cx - RL, cy); ctx.lineTo(cx - halfRoad, cy);
   ctx.stroke();
 
-  // ─── White dashed lane dividers ────────────────────────────
+  // ─── White dashed lane dividers (between lanes in same direction) ────
   ctx.strokeStyle = WHITE_DASH;
   ctx.lineWidth = 1;
   ctx.setLineDash([8, 12]);
 
-  // N-S dividers
-  for (const dx of [-LW / 2, LW / 2]) {
+  // N-S dividers: 2 dividers per side (separating left/through/right)
+  for (const dx of [-LW, -LW * 2, LW, LW * 2]) {
     ctx.beginPath();
     ctx.moveTo(cx + dx, cy - RL); ctx.lineTo(cx + dx, cy - halfRoad);
     ctx.moveTo(cx + dx, cy + halfRoad); ctx.lineTo(cx + dx, cy + RL);
@@ -44,7 +44,7 @@ export function drawCrossroadMarkings(ctx: CanvasRenderingContext2D, cx: number,
   }
 
   // E-W dividers
-  for (const dy of [-LW / 2, LW / 2]) {
+  for (const dy of [-LW, -LW * 2, LW, LW * 2]) {
     ctx.beginPath();
     ctx.moveTo(cx - RL, cy + dy); ctx.lineTo(cx - halfRoad, cy + dy);
     ctx.moveTo(cx + halfRoad, cy + dy); ctx.lineTo(cx + RL, cy + dy);
@@ -96,14 +96,15 @@ export function drawTJunctionMarkings(ctx: CanvasRenderingContext2D, cx: number,
   ctx.strokeStyle = WHITE_DASH;
   ctx.lineWidth = 1;
   ctx.setLineDash([8, 12]);
-  for (const dx of [-LW / 2, LW / 2]) {
+  for (const dx of [-LW, -LW * 2, LW, LW * 2]) {
     ctx.beginPath();
     ctx.moveTo(cx + dx, cy - RL); ctx.lineTo(cx + dx, cy - halfRoad);
+    ctx.moveTo(cx + dx, cy + halfRoad); ctx.lineTo(cx + dx, cy + RL);
     ctx.stroke();
   }
-  for (const dy of [-LW / 2, LW / 2]) {
+  for (const dy of [-LW, -LW * 2, LW, LW * 2]) {
     ctx.beginPath();
-    ctx.moveTo(cx + halfRoad, cy + dy); ctx.lineTo(cx + RL, cy + dy);
+    ctx.moveTo(cx - halfRoad, cy + dy); ctx.lineTo(cx + RL, cy + dy);
     ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -168,7 +169,7 @@ export function drawStraightRoadMarkings(ctx: CanvasRenderingContext2D, cx: numb
   ctx.strokeStyle = WHITE_DASH;
   ctx.lineWidth = 1;
   ctx.setLineDash([8, 12]);
-  for (const dx of [-LW / 2, LW / 2]) {
+  for (const dx of [-LW, -LW * 2, LW, LW * 2]) {
     ctx.beginPath();
     ctx.moveTo(cx + dx, cy - RL); ctx.lineTo(cx + dx, cy - halfRoad);
     ctx.moveTo(cx + dx, cy + halfRoad); ctx.lineTo(cx + dx, cy + RL);

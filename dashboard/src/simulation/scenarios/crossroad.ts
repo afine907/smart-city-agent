@@ -14,28 +14,28 @@ function buildPathDef(
   const IR = IX_R;
   const RL = ROAD_LEN;
 
-  // Lane center positions for each approach
-  // Right-hand traffic: approach enters on the right side of the road
+  // Right-hand traffic: each approach's lanes are on the RIGHT side of the road
+  // (from the driver's perspective). Yellow center line at cx/cy separates directions.
   const laneConfigs: Record<number, Record<LaneType, { x: number; y: number; exitX: number; exitY: number; dx: number; dy: number }>> = {
-    0: { // From North, driving South
-      left:    { x: cx - LW, y: 0, exitX: cx + RL, exitY: cy - LW, dx: 0, dy: 1 },
-      through: { x: cx,      y: 0, exitX: cx,      exitY: cy + RL, dx: 0, dy: 1 },
-      right:   { x: cx + LW, y: 0, exitX: cx - RL, exitY: cy + LW, dx: 0, dy: 1 },
+    0: { // From North, driving South — west side of road (x < cx)
+      left:    { x: cx - LW * 0.5, y: 0, exitX: cx + RL,  exitY: cy - LW * 0.5, dx: 0, dy: 1 },
+      through: { x: cx - LW * 1.5, y: 0, exitX: cx,       exitY: cy + RL,       dx: 0, dy: 1 },
+      right:   { x: cx - LW * 2.5, y: 0, exitX: cx - RL,  exitY: cy - LW * 0.5, dx: 0, dy: 1 },
     },
-    1: { // From East, driving West
-      left:    { x: 0, y: cy + LW, exitX: cx + LW, exitY: cy + RL, dx: -1, dy: 0 },
-      through: { x: 0, y: cy,      exitX: cx - RL, exitY: cy,      dx: -1, dy: 0 },
-      right:   { x: 0, y: cy - LW, exitX: cx - LW, exitY: cy - RL, dx: -1, dy: 0 },
+    1: { // From East, driving West — north side of road (y < cy)
+      left:    { x: 0, y: cy - LW * 0.5, exitX: cx - LW * 0.5, exitY: cy + RL, dx: -1, dy: 0 },
+      through: { x: 0, y: cy - LW * 1.5, exitX: cx - RL,       exitY: cy,      dx: -1, dy: 0 },
+      right:   { x: 0, y: cy - LW * 2.5, exitX: cx - LW * 0.5, exitY: cy - RL, dx: -1, dy: 0 },
     },
-    2: { // From South, driving North
-      left:    { x: cx + LW, y: 0, exitX: cx - RL, exitY: cy + LW, dx: 0, dy: -1 },
-      through: { x: cx,      y: 0, exitX: cx,      exitY: cy - RL, dx: 0, dy: -1 },
-      right:   { x: cx - LW, y: 0, exitX: cx + RL, exitY: cy - LW, dx: 0, dy: -1 },
+    2: { // From South, driving North — east side of road (x > cx)
+      left:    { x: cx + LW * 0.5, y: 0, exitX: cx - RL,  exitY: cy + LW * 0.5, dx: 0, dy: -1 },
+      through: { x: cx + LW * 1.5, y: 0, exitX: cx,       exitY: cy - RL,       dx: 0, dy: -1 },
+      right:   { x: cx + LW * 2.5, y: 0, exitX: cx + RL,  exitY: cy + LW * 0.5, dx: 0, dy: -1 },
     },
-    3: { // From West, driving East
-      left:    { x: 0, y: cy - LW, exitX: cx - LW, exitY: cy - RL, dx: 1, dy: 0 },
-      through: { x: 0, y: cy,      exitX: cx + RL, exitY: cy,      dx: 1, dy: 0 },
-      right:   { x: 0, y: cy + LW, exitX: cx + LW, exitY: cy + RL, dx: 1, dy: 0 },
+    3: { // From West, driving East — south side of road (y > cy)
+      left:    { x: 0, y: cy + LW * 0.5, exitX: cx + LW * 0.5, exitY: cy - RL, dx: 1, dy: 0 },
+      through: { x: 0, y: cy + LW * 1.5, exitX: cx + RL,       exitY: cy,      dx: 1, dy: 0 },
+      right:   { x: 0, y: cy + LW * 2.5, exitX: cx + LW * 0.5, exitY: cy + RL, dx: 1, dy: 0 },
     },
   };
 

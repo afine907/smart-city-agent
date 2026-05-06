@@ -84,7 +84,7 @@ export interface SSEEvent {
 
 // ─── Constants ───────────────────────────────────────────────
 export const LANE_W = 18;
-export const ROAD_W = LANE_W * 3;
+export const ROAD_W = LANE_W * 6;  // 3 lanes per direction (left/through/right)
 export const IX_R = 22;
 export const ROAD_LEN = 220;
 export const MIN_GAP = 28;
