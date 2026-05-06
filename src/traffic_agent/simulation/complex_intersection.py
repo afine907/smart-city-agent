@@ -323,9 +323,13 @@ class ComplexIntersection:
         # Check if current phase should end
         should_advance = False
 
-        if phase.name in ("NS_YELLOW", "EW_YELLOW", "ALL_RED_1", "ALL_RED_2"):
-            # Fixed-duration phases
-            if self.phase_timer >= phase.yellow or self.phase_timer >= phase.all_red:
+        if phase.name in ("NS_YELLOW", "EW_YELLOW"):
+            # Yellow phase: advance after yellow duration
+            if self.phase_timer >= phase.yellow:
+                should_advance = True
+        elif phase.name in ("ALL_RED_1", "ALL_RED_2"):
+            # All-red phase: advance after all_red duration
+            if self.phase_timer >= phase.all_red:
                 should_advance = True
         else:
             # Green phases: check min/max green

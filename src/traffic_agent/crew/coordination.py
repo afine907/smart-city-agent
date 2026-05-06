@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from traffic_agent.llm.client import LLMClient, LLMConfig
 from traffic_agent.llm.parser import ResponseParser, TrafficDecision
 from traffic_agent.tools.traffic_tools import IntersectionState
+from traffic_agent.visualization.events import EventCollector
 
 
 @dataclass
@@ -119,10 +120,12 @@ class CoordinationCrew:
         self,
         simulation,
         config: Optional[LLMConfig] = None,
+        collector: Optional[EventCollector] = None,
     ):
         self.sim = simulation
         self.llm_config = config or LLMConfig()
         self.llm_client = LLMClient(self.llm_config)
+        self.collector = collector
         
         self.message_bus = MessageBus()
         self.conflict_detector = ConflictDetector()
@@ -138,26 +141,56 @@ class CoordinationCrew:
     def step(self) -> List[Dict[str, Any]]:
         """
         Execute one coordination cycle.
-        
+
         Returns list of final decisions.
         """
         # 1. Each agent observes and decides
         agent_decisions = {}
         for ix_id in self.intersection_ids:
+            t0 = time.time()
             decision = self._agent_decide(ix_id)
+            duration_ms = (time.time() - t0) * 1000
             agent_decisions[ix_id] = decision
-        
+
+            if self.collector:
+                state = self.sim.get_state(ix_id)
+                self.collector.emit_thinking(
+                    agent_id=ix_id,
+                    thought=f"Analyzing traffic at {ix_id}",
+                    context={
+                        "queue": self._total_queue(state),
+                        "current_phase": state.current_phase,
+                    },
+                )
+                self.collector.emit_decision(
+                    agent_id=ix_id,
+                    decision={
+                        "phase": decision.decision.phase,
+                        "duration": decision.decision.duration,
+                        "reasoning": decision.decision.reasoning,
+                    },
+                    duration_ms=duration_ms,
+                )
+
         # 2. Detect conflicts
         conflicts = self.conflict_detector.detect(
             {ix_id: d.decision for ix_id, d in agent_decisions.items()},
             self.graph,
         )
         self.total_conflicts += len(conflicts)
-        
+
+        if self.collector:
+            for agent1, agent2, conflict_type in conflicts:
+                self.collector.emit_conflict(
+                    agent_id=agent1,
+                    conflict_type=conflict_type,
+                    details=f"Conflict with {agent2}: {conflict_type}",
+                )
+
         # 3. Resolve conflicts via coordinator
         if conflicts:
             agent_decisions = self._resolve_conflicts(agent_decisions, conflicts)
-        
+
         # 4. Execute decisions
         results = []
         for ix_id, agent_dec in agent_decisions.items():
@@ -168,7 +201,7 @@ class CoordinationCrew:
                 "messages_sent": len(agent_dec.messages_sent),
                 "messages_received": len(agent_dec.messages_received),
             })
-        
+
         # 5. Record
         self.decision_history.append({
             "timestamp": time.time(),
@@ -176,7 +209,7 @@ class CoordinationCrew:
             "decisions": results,
             "conflicts": len(conflicts),
         })
-        
+
         return results
     
     def _agent_decide(self, ix_id: str) -> AgentDecision:

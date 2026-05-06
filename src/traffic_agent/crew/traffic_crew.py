@@ -20,6 +20,7 @@ from traffic_agent.tools.traffic_tools import (
     COORDINATOR_PROMPT,
 )
 from traffic_agent.crew.coordination import ConflictDetector
+from traffic_agent.visualization.events import EventCollector
 
 
 @dataclass
@@ -56,10 +57,12 @@ class TrafficControlCrew:
         intersection_ids: List[str],
         graph: Dict[str, List[str]],
         config: Optional[CrewConfig] = None,
+        collector: Optional[EventCollector] = None,
     ):
         self.intersection_ids = intersection_ids
         self.graph = graph
         self.config = config or CrewConfig()
+        self.collector = collector
 
         # LLM client
         self.llm_client = LLMClient(self.config.llm)
@@ -80,6 +83,7 @@ class TrafficControlCrew:
         self._total_cache_hits = 0
         self._total_decisions = 0
         self._decision_history: List[Dict] = []
+        self._last_cache_hit = False
 
         # Try to create CrewAI agents (optional)
         self._use_crewai = self._try_init_crewai()
@@ -100,12 +104,42 @@ class TrafficControlCrew:
         states: Dict[str, IntersectionState] = {}
         for ix_id in self.intersection_ids:
             states[ix_id] = engine.get_state(ix_id)
+            if self.collector:
+                state = states[ix_id]
+                self.collector.emit_thinking(
+                    agent_id=ix_id,
+                    thought=f"Analyzing traffic at {ix_id}",
+                    context={
+                        "queue_lengths": {
+                            "north": state.queue_north,
+                            "south": state.queue_south,
+                            "east": state.queue_east,
+                            "west": state.queue_west,
+                        },
+                        "current_phase": state.current_phase,
+                        "avg_wait": state.avg_wait_time,
+                    },
+                )
 
         # 2. Each agent makes independent decision
         agent_decisions: Dict[str, TrafficDecision] = {}
         for ix_id in self.intersection_ids:
+            t0 = time.time()
             decision = self._agent_decide(ix_id, states[ix_id], states)
+            duration_ms = (time.time() - t0) * 1000
             agent_decisions[ix_id] = decision
+
+            if self.collector:
+                self.collector.emit_decision(
+                    agent_id=ix_id,
+                    decision={
+                        "phase": decision.phase,
+                        "duration": decision.duration,
+                        "reasoning": decision.reasoning,
+                        "cache_hit": self._last_cache_hit,
+                    },
+                    duration_ms=duration_ms,
+                )
 
         # 3. Coordinate if enabled
         if self.config.enable_coordination:
@@ -140,11 +174,14 @@ class TrafficControlCrew:
     ) -> TrafficDecision:
         """Get decision from an intersection agent."""
 
+        self._last_cache_hit = False
+
         # Check cache first
         if self.cache:
             cached = self.cache.get(state)
             if cached:
                 self._total_cache_hits += 1
+                self._last_cache_hit = True
                 return cached
 
         # Build prompt
@@ -199,6 +236,15 @@ class TrafficControlCrew:
         if not conflicts:
             return decisions
 
+        # Emit conflict events
+        if self.collector:
+            for agent1, agent2, conflict_type in conflicts:
+                self.collector.emit_conflict(
+                    agent_id=agent1,
+                    conflict_type=conflict_type,
+                    details=f"Conflict with {agent2}: {conflict_type}",
+                )
+
         # Build coordination prompt
         decisions_text = "\n".join(
             f"{ix_id}: {d.to_dict()}"
@@ -245,6 +291,17 @@ class TrafficControlCrew:
                         coordinated[ix_id] = decisions[ix_id]
                 else:
                     coordinated[ix_id] = decisions[ix_id]
+
+            # Emit coordination events
+            if self.collector:
+                for ix_id in coordinated:
+                    if ix_id in decisions and coordinated[ix_id].phase != decisions[ix_id].phase:
+                        self.collector.emit_coordination(
+                            agent_id="coordinator",
+                            target_id=ix_id,
+                            message=f"Phase changed: {decisions[ix_id].phase} → {coordinated[ix_id].phase}",
+                        )
+
             return coordinated
         except (json.JSONDecodeError, KeyError):
             return decisions  # Fall back to original decisions

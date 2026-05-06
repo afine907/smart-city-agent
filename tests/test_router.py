@@ -132,15 +132,25 @@ class TestRoutePlanner:
         assert path[-1] == "guanggu_6"
 
     def test_bidirectional_road(self):
-        """Bidirectional roads allow reverse travel."""
+        """Bidirectional roads allow reverse travel via explicit reverse segments."""
         from traffic_agent.simulation.osm_sim import OSMSegment
 
-        # Create a simple 2-node bidirectional network
+        # Create a 2-node bidirectional network with explicit reverse segments
         segments = {
             "road_1": OSMSegment(
                 road_id="road_1",
                 from_id="A",
                 to_id="B",
+                length=100.0,
+                speed_limit=13.89,
+                lanes=2,
+                name="test",
+                oneway=False,
+            ),
+            "road_1_rev": OSMSegment(
+                road_id="road_1_rev",
+                from_id="B",
+                to_id="A",
                 length=100.0,
                 speed_limit=13.89,
                 lanes=2,
