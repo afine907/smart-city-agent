@@ -14,6 +14,11 @@
 | 第5章 | [05-architecture.md](05-architecture.md) | 完整项目结构、核心模块、数据流 |
 | 第6章 | [06-comparison.md](06-comparison.md) | 与现有工作的区别、学术定位 |
 | 第7章 | [07-implementation.md](07-implementation.md) | 2 周实施计划、验收标准、风险应对 |
+| **第8章** | **[08-multi-intersection-coordination.md](08-multi-intersection-coordination.md)** | **多路口协调：绿波、冲突检测、Agent 通信协议** |
+| **第9章** | **[09-pedestrian-signal.md](09-pedestrian-signal.md)** | **行人与非机动车信号：过街相位、二次过街、闯红灯模型** |
+
+另有独立设计文档：
+- [../../MIXED_TRAFFIC_DESIGN.md](../../MIXED_TRAFFIC_DESIGN.md) — 混行交通详细设计（6种交通参与者、物理属性、信号遵守模型）
 
 ## 最佳技术栈
 
