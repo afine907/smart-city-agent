@@ -18,6 +18,8 @@ from traffic_agent.simulation.engine import (
     SimulationConfig,
     SimulationEngine,
     Vehicle,
+    VehicleType,
+    VEHICLE_TYPES,
 )
 from traffic_agent.tools.traffic_tools import IntersectionState
 
@@ -255,7 +257,7 @@ class GridSimulation:
             ix.phase_timer = 0.0
 
     def _generate_boundary_vehicles(self, dt: float) -> None:
-        """Generate vehicles at boundary intersections."""
+        """Generate vehicles at boundary intersections with mixed traffic types."""
         boundaries = [
             (0, col) for col in range(self.cols)  # Top row
         ] + [
@@ -271,15 +273,29 @@ class GridSimulation:
                 self._vehicle_counter += 1
                 self.total_vehicles_generated += 1
 
-                # Random destination
-                dest_row = np.random.randint(0, self.rows)
-                dest_col = np.random.randint(0, self.cols)
+                # Determine vehicle type
+                is_emergency = np.random.random() < self.config.emergency_rate
+                if is_emergency:
+                    vtype = VehicleType.EMERGENCY
+                else:
+                    ratios = self.config.get_mix_ratios()
+                    types = list(ratios.keys())
+                    probs = [ratios[t] for t in types]
+                    idx = np.random.choice(len(types), p=probs)
+                    vtype = types[idx]
+
+                type_info = VEHICLE_TYPES[vtype]
+                speed = type_info.speed_normal * np.random.uniform(0.85, 1.15)
+                speed = max(type_info.speed_min, min(type_info.speed_max, speed))
 
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=np.random.randint(0, 4),
                     position=self.config.road_length,
-                    speed=self.config.speed_limit,
+                    speed=speed,
+                    vehicle_type=vtype,
+                    is_emergency=is_emergency,
+                    _type_info=type_info,
                 )
 
                 # Add to segment approaching this intersection
@@ -304,7 +320,11 @@ class GridSimulation:
                 self.segments[seg_key].vehicles.append(vehicle)
 
     def _move_vehicles(self, dt: float) -> None:
-        """Move vehicles through road segments, routing at intersections."""
+        """Move vehicles through road segments, routing at intersections.
+
+        Respects mixed traffic: different vehicle types have different
+        speeds and signal compliance rates.
+        """
         for seg_key, seg in self.segments.items():
             to_remove = []
 
@@ -314,14 +334,25 @@ class GridSimulation:
                     to_ix = self.intersections.get(seg.to_id)
                     if to_ix:
                         has_green = self._has_green(to_ix, v.approach)
-                        if not has_green:
+
+                        # Check if this vehicle type obeys signals
+                        if v.vehicle_type == VehicleType.PEDESTRIAN:
+                            obey = v.should_obey_signal(self.config.pedestrian_jaywalking_rate)
+                        elif v.vehicle_type == VehicleType.BICYCLE:
+                            obey = v.should_obey_signal(self.config.bike_red_light_rate)
+                        elif v.vehicle_type == VehicleType.E_BIKE:
+                            obey = v.should_obey_signal(self.config.e_bike_lane_violation_rate)
+                        else:
+                            obey = v.should_obey_signal()
+
+                        if not has_green and obey:
                             # Red light — wait
                             v.speed = 0
                             v.waiting = True
                             self.total_wait_time += dt
                             continue
                         else:
-                            # Green light — route through intersection
+                            # Green light or vehicle ignores signal — route through
                             next_seg = self._route_vehicle(seg.to_id, v)
                             if next_seg is None:
                                 self.total_vehicles_completed += 1
@@ -329,12 +360,22 @@ class GridSimulation:
                             continue
 
                 # Check if vehicle will cross the intersection this step
-                new_pos = v.position - seg.speed_limit * dt
+                new_pos = v.position - v.speed * dt
                 if v.position > 5.0 and new_pos <= 5.0:
                     to_ix = self.intersections.get(seg.to_id)
                     if to_ix:
                         has_green = self._has_green(to_ix, v.approach)
-                        if not has_green:
+
+                        if v.vehicle_type == VehicleType.PEDESTRIAN:
+                            obey = v.should_obey_signal(self.config.pedestrian_jaywalking_rate)
+                        elif v.vehicle_type == VehicleType.BICYCLE:
+                            obey = v.should_obey_signal(self.config.bike_red_light_rate)
+                        elif v.vehicle_type == VehicleType.E_BIKE:
+                            obey = v.should_obey_signal(self.config.e_bike_lane_violation_rate)
+                        else:
+                            obey = v.should_obey_signal()
+
+                        if not has_green and obey:
                             # Stop at intersection boundary
                             v.position = 5.0
                             v.speed = 0
@@ -349,8 +390,9 @@ class GridSimulation:
                             to_remove.append(i)
                             continue
 
-                # Move forward normally
-                v.speed = seg.speed_limit
+                # Move forward normally — use vehicle-type-specific speed
+                effective_speed = v.get_effective_speed(seg.speed_limit)
+                v.speed = effective_speed
                 v.waiting = False
                 v.position -= v.speed * dt
 

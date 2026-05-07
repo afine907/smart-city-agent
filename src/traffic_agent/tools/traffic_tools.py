@@ -21,9 +21,24 @@ TRAFFIC_EXPERT_PROMPT = """你是一个城市交通信号灯AI控制专家，负
 你有20年交通工程经验。你理解信号配时、高峰潮汐、紧急车辆优先、行人安全。
 你基于实时数据做决策，并与相邻路口协调以创建绿波带。
 
+## ⚠️ 混行交通意识
+本路口是**混行交通**环境，交通参与者包括：
+- 🚗 **汽车**：正常速度50km/h，占主要流量
+- 🚌 **公交车**：体积大，加速慢，停站频繁
+- 🛵 **电动自行车**：速度22-30km/h，可能穿插机动车道，需注意非机动车道管理
+- 🚲 **自行车**：速度15km/h，可能闯红灯
+- 🚶 **行人**：速度5km/h，可能闯红灯横穿马路
+- 🚑 **紧急车辆**：永远优先，可闯红灯
+
+**混行决策要点：**
+1. 电动自行车占比高时 → 考虑延长绿灯清空非机动车
+2. 行人较多时 → 确保行人过街相位充足，避免过长等待导致闯红灯
+3. 公交车多时 → 适当延长绿灯，减少公交频繁启停
+4. 自行车和行人可能不遵守信号 → 绿灯尾部预留安全间隔
+
 ## 决策原则
-1. **安全第一**: 确保行人和车辆安全
-2. **效率优先**: 最小化总等待时间
+1. **安全第一**: 确保行人和车辆安全，特别是弱势交通参与者
+2. **效率优先**: 最小化总等待时间（考虑不同车型的等待成本不同）
 3. **公平性**: 不让任何一个方向等待过久
 4. **协调性**: 与邻居路口配合
 5. **应急响应**: 紧急车辆永远优先
@@ -40,12 +55,12 @@ TRAFFIC_EXPERT_PROMPT = """你是一个城市交通信号灯AI控制专家，负
     "action": "extend_green" | "switch_phase" | "emergency",
     "phase": "NS_GREEN" | "EW_GREEN",
     "duration": <秒数, 10-60>,
-    "reasoning": "<你的决策推理过程, 中文>",
+    "reasoning": "<你的决策推理过程, 中文, 须说明混行交通考量>",
     "confidence": <0.0-1.0>,
     "coordination_message": "<给邻居路口的消息, 可选>"
 }}
 
-注意：只输出JSON，不要有其他文字。"""
+注意：只输出JSON，不要有其他文字。reasoning 中必须体现你对混行交通的分析。"""
 
 COORDINATOR_PROMPT = """你是城市交通协调主管，负责协调多个路口Agent的决策。
 
@@ -82,7 +97,7 @@ COORDINATOR_PROMPT = """你是城市交通协调主管，负责协调多个路�
 
 @dataclass
 class IntersectionState:
-    """Current state of an intersection."""
+    """Current state of an intersection — with mixed traffic breakdown."""
     intersection_id: str
     timestamp: float
     
@@ -105,9 +120,43 @@ class IntersectionState:
     # Special conditions
     emergency: bool = False
     emergency_approach: Optional[int] = None
+
+    # Mixed traffic: {vehicle_type: {total: int, waiting: int}}
+    vehicle_type_breakdown: Optional[Dict[str, Dict[str, int]]] = None
     
     def to_text(self) -> str:
-        """Format state as human-readable text for LLM."""
+        """Format state as human-readable text for LLM — including mixed traffic info."""
+        # Build vehicle type summary
+        type_lines = ""
+        if self.vehicle_type_breakdown:
+            type_map = {
+                "car": "汽车", "bus": "公交车", "e_bike": "电动自行车",
+                "bicycle": "自行车", "pedestrian": "行人", "emergency": "紧急车辆",
+            }
+            parts = []
+            for vtype, counts in self.vehicle_type_breakdown.items():
+                zh = type_map.get(vtype, vtype)
+                total = counts.get("total", 0)
+                waiting = counts.get("waiting", 0)
+                if total > 0:
+                    parts.append(f"{zh}{total}辆(等{waiting})")
+            if parts:
+                type_lines = f"\n交通构成: {', '.join(parts)}"
+
+        # Mixed traffic advisory
+        advisory = ""
+        if self.vehicle_type_breakdown:
+            eb = self.vehicle_type_breakdown.get("e_bike", {}).get("total", 0)
+            ped = self.vehicle_type_breakdown.get("pedestrian", {}).get("total", 0)
+            total = self.get_total_queue()
+            if total > 0:
+                eb_pct = eb / total
+                ped_pct = ped / total
+                if eb_pct > 0.3:
+                    advisory += "\n⚠️ 电动自行车占比高，注意非机动车道管理和穿插行为"
+                if ped_pct > 0.15:
+                    advisory += "\n⚠️ 行人较多，注意行人过街安全和信号配时"
+
         return f"""路口: {self.intersection_id}
 时间: {self.timestamp:.1f}s
 
@@ -116,9 +165,9 @@ class IntersectionState:
 - 南: {self.queue_south}辆, 等待{self.wait_south:.0f}s
 - 东: {self.queue_east}辆, 等待{self.wait_east:.0f}s
 - 西: {self.queue_west}辆, 等待{self.wait_west:.0f}s
-
+{type_lines}
 当前信号: {self.current_phase}, 已持续{self.phase_duration:.0f}s
-紧急车辆: {'有' if self.emergency else '无'}
+紧急车辆: {'有 — 需立即给予优先通行' if self.emergency else '无'}{advisory}
 """
     
     def get_max_queue(self) -> int:
@@ -126,6 +175,32 @@ class IntersectionState:
     
     def get_total_queue(self) -> int:
         return self.queue_north + self.queue_south + self.queue_east + self.queue_west
+
+    def get_total_by_type(self, vehicle_type: str) -> int:
+        """Get total count of a specific vehicle type."""
+        if self.vehicle_type_breakdown and vehicle_type in self.vehicle_type_breakdown:
+            return self.vehicle_type_breakdown[vehicle_type].get("total", 0)
+        return 0
+
+    def get_mixed_traffic_summary(self) -> str:
+        """Return a one-line summary of mixed traffic composition."""
+        if not self.vehicle_type_breakdown:
+            return "无混行数据"
+        total = self.get_total_queue()
+        if total == 0:
+            return "无车辆"
+        parts = []
+        type_map = {
+            "car": "汽车", "bus": "公交", "e_bike": "电自",
+            "bicycle": "单车", "pedestrian": "行人", "emergency": "急救",
+        }
+        for vtype, counts in self.vehicle_type_breakdown.items():
+            c = counts.get("total", 0)
+            if c > 0:
+                pct = c / total * 100
+                zh = type_map.get(vtype, vtype)
+                parts.append(f"{zh}{c}({pct:.0f}%)")
+        return " ".join(parts) if parts else "无车辆"
 
 
 class TrafficObservationTool:

@@ -17,6 +17,8 @@ from traffic_agent.simulation.engine import (
     Intersection,
     SimulationConfig,
     Vehicle,
+    VehicleType,
+    VEHICLE_TYPES,
 )
 from traffic_agent.simulation.osm import OSMNetwork
 from traffic_agent.simulation.router import RoutePlanner
@@ -389,7 +391,7 @@ class OSMSimulation:
             return 3  # W (bearing -3π/4 to -π/4: -135° to -45°)
 
     def _generate_boundary_vehicles(self, dt: float) -> None:
-        """Generate vehicles at boundary intersections."""
+        """Generate vehicles at boundary intersections with mixed traffic types."""
         all_ids = list(self.intersections.keys())
         if len(all_ids) < 2:
             return
@@ -405,13 +407,31 @@ class OSMSimulation:
                     dest = all_ids[np.random.randint(len(all_ids))]
                 self.vehicle_destinations[f"v_{self._vehicle_counter}"] = dest
 
+                # Determine vehicle type
+                is_emergency = np.random.random() < self.config.emergency_rate
+                if is_emergency:
+                    vtype = VehicleType.EMERGENCY
+                else:
+                    ratios = self.config.get_mix_ratios()
+                    types = list(ratios.keys())
+                    probs = [ratios[t] for t in types]
+                    idx = np.random.choice(len(types), p=probs)
+                    vtype = types[idx]
+
+                type_info = VEHICLE_TYPES[vtype]
+                speed = type_info.speed_normal * np.random.uniform(0.85, 1.15)
+                speed = max(type_info.speed_min, min(type_info.speed_max, speed))
+
                 # Create vehicle approaching this intersection
                 approach = np.random.randint(0, 4)
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=approach,
                     position=self.config.road_length,
-                    speed=self.config.speed_limit,
+                    speed=speed,
+                    vehicle_type=vtype,
+                    is_emergency=is_emergency,
+                    _type_info=type_info,
                 )
 
                 # Find incoming segment or create virtual approach
@@ -451,6 +471,8 @@ class OSMSimulation:
         Vehicles at position <= 5.0 are at the intersection and will be
         handled by _process_intersections. This method only moves vehicles
         that are still approaching (position > 5.0).
+
+        Uses vehicle-type-specific speeds and signal compliance.
         """
         for seg in self.segments.values():
             to_remove = []
@@ -460,8 +482,9 @@ class OSMSimulation:
                 if v.position <= 5.0:
                     continue
 
-                # Move forward
-                v.speed = seg.speed_limit
+                # Move forward with vehicle-type-specific speed
+                effective_speed = v.get_effective_speed(seg.speed_limit)
+                v.speed = effective_speed
                 v.waiting = False
                 v.position -= v.speed * dt
 
@@ -480,7 +503,7 @@ class OSMSimulation:
         Vehicles at position <= 5.0 are at/through the intersection.
         - If past intersection (position <= 0): must route or complete
         - If at intersection with green: route to next segment
-        - If at intersection with red: wait
+        - If at intersection with red: wait (unless signal-violating type)
         """
         for seg in list(self.segments.values()):
             to_remove = []
@@ -498,7 +521,18 @@ class OSMSimulation:
                         to_ix = self.intersections.get(seg.to_id)
                         if to_ix:
                             has_green = self._has_green(to_ix, v.approach)
-                            if has_green:
+
+                            # Check if this vehicle type obeys signals
+                            if v.vehicle_type == VehicleType.PEDESTRIAN:
+                                obey = v.should_obey_signal(self.config.pedestrian_jaywalking_rate)
+                            elif v.vehicle_type == VehicleType.BICYCLE:
+                                obey = v.should_obey_signal(self.config.bike_red_light_rate)
+                            elif v.vehicle_type == VehicleType.E_BIKE:
+                                obey = v.should_obey_signal(self.config.e_bike_lane_violation_rate)
+                            else:
+                                obey = v.should_obey_signal()
+
+                            if has_green or not obey:
                                 next_seg_id = self._route_vehicle(seg.to_id, v)
                                 if next_seg_id is None:
                                     self.total_vehicles_completed += 1
