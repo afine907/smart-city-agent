@@ -14,9 +14,15 @@
 | 第5章 | [05-architecture.md](05-architecture.md) | 完整项目结构、核心模块、数据流 |
 | 第6章 | [06-comparison.md](06-comparison.md) | 与现有工作的区别、学术定位 |
 | 第7章 | [07-implementation.md](07-implementation.md) | 2 周实施计划、验收标准、风险应对 |
-| **第8章** | **[08-multi-intersection-coordination.md](08-multi-intersection-coordination.md)** | **多路口协调：绿波、冲突检测、Agent 通信协议** |
-| **第9章** | **[09-pedestrian-signal.md](09-pedestrian-signal.md)** | **行人与非机动车信号：过街相位、二次过街、闯红灯模型** |
-| **第10章** | **[10-junction-types.md](10-junction-types.md)** | **路口类型与信号配置：十字/丁字/Y型/环形/多路/斜交** |
+| **第8章** | **[08-multi-intersection-coordination.md](08-multi-intersection-coordination.md)** | **多路口协调：绿波、冲突检测、Agent 通信** |
+| **第9章** | **[09-pedestrian-signal.md](09-pedestrian-signal.md)** | **行人与非机动车信号：过街相位、二次过街** |
+| **第10章** | **[10-junction-types.md](10-junction-types.md)** | **路口类型：十字/丁字/Y型/环形/多路/斜交** |
+| **第11章** | **[11-left-turn-control.md](11-left-turn-control.md)** | **左转控制：保护/许可/受控许可、冲突检测** |
+| **第12章** | **[12-transit-priority.md](12-transit-priority.md)** | **公交优先：检测、信号策略、站台协调** |
+| **第13章** | **[13-tidal-flow.md](13-tidal-flow.md)** | **潮汐与时段：时段划分、潮汐检测、配时调整** |
+| **第14章** | **[14-dashboard.md](14-dashboard.md)** | **Dashboard 产品设计：信息架构、交互、可视化** |
+| **第15章** | **[15-deployment.md](15-deployment.md)** | **部署与运维：容器化、监控、灰度、故障恢复** |
+| **第16章** | **[16-safety.md](16-safety.md)** | **安全边界：硬约束、人工接管、数据安全** |
 
 另有独立设计文档：
 - [../../MIXED_TRAFFIC_DESIGN.md](../../MIXED_TRAFFIC_DESIGN.md) — 混行交通详细设计（6种交通参与者、物理属性、信号遵守模型）
