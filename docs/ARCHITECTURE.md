@@ -388,46 +388,89 @@ class SimulationEngine:
     
     NOT SUMO — fully custom, zero dependencies.
     Purpose: Provide realistic enough data for LLM decision making.
+    Supports mixed traffic: cars, e-bikes, bicycles, pedestrians, buses.
     """
     
     def __init__(self, config: SimulationConfig):
         self.road_network = RoadNetwork()
         self.vehicle_manager = VehicleManager()
         self.clock = 0.0
+        self._type_counts: Dict[VehicleType, int]  # mixed traffic stats
         
     def get_state(self, intersection_id: str) -> IntersectionState:
-        """Get current state for an intersection."""
+        """Get state including vehicle type breakdown per direction."""
         pass
     
-    def apply_decision(self, intersection_id: str, decision: Dict) -> None:
-        """Apply LLM decision to simulation."""
+    def _pick_vehicle_type(self) -> VehicleType:
+        """Pick vehicle type based on configured mix ratios."""
         pass
     
     def step(self, dt: float) -> None:
-        """Advance simulation by dt seconds."""
+        """Advance simulation — each vehicle type moves at its own speed."""
         pass
 ```
 
-### 6.2 Vehicle Behavior
+### 6.2 Mixed Traffic Model
+
+六种交通参与者，每种有独立的物理属性和行为特征：
+
+| 类型 | 速度 | 信号遵守 | 空间占用 | 关键特征 |
+|------|------|---------|---------|---------|
+| 🚗 汽车 | 50 km/h | 100% | 7.5m | 标准交通流 |
+| 🚌 公交 | 40 km/h | 100% | 15m | 体积大、进站停靠 |
+| 🛵 电动自行车 | 22.5 km/h | 85% | 2.5m | 穿插、不走非机动车道 |
+| 🚲 自行车 | 15 km/h | 95% | 2.2m | 可能闯红灯 |
+| 🚶 行人 | 5 km/h | 90% | 0.8m | 横穿马路、犹豫行为 |
+| 🚑 紧急车辆 | 60 km/h | 0% | 9.0m | 永远优先 |
 
 ```python
-class Vehicle:
-    """Simple vehicle model."""
-    id: str
-    approach: int       # 0=N, 1=E, 2=S, 3=W
-    position: float     # meters from intersection
-    speed: float        # m/s
-    desired_speed: float
-    waiting: bool
-    
-    def update(self, dt: float, has_green: bool) -> None:
-        if at_intersection and not has_green:
-            self.speed = 0
-            self.waiting = True
-        else:
-            self.speed = self.desired_speed
-            self.waiting = False
-        self.position -= self.speed * dt
+class VehicleType(str, Enum):
+    CAR = "car"
+    BUS = "bus"
+    E_BIKE = "e_bike"
+    BICYCLE = "bicycle"
+    PEDESTRIAN = "pedestrian"
+    EMERGENCY = "emergency"
+
+@dataclass(frozen=True)
+class VehicleTypeInfo:
+    speed_min: float       # m/s
+    speed_max: float       # m/s
+    speed_normal: float    # m/s — cruise speed
+    length: float          # meters
+    width: float           # meters
+    space_occupancy: float # meters — queue space (length + gap)
+    respects_signal: bool  # False = may violate
+    has_priority: bool     # Emergency
+```
+
+**信号遵守模型**：电动自行车（15%违规）、行人（10%违规）、自行车（5%违规）
+在红灯时有一定概率直接通过，这是混行交通的核心复杂度。
+
+详细设计见 [MIXED_TRAFFIC_DESIGN.md](MIXED_TRAFFIC_DESIGN.md)。
+
+### 6.3 Vehicle Behavior (Current → Target)
+
+| 维度 | 当前实现 | 目标实现 |
+|------|---------|---------|
+| 速度 | 固定速度 | IDM 跟车模型 |
+| 加减速 | 无 | 基于前车距离和速度差 |
+| 变道 | 无 | 多车道变道逻辑 |
+| 排队 | 简单计数 | 基于空间占用的排队长度 |
+| 左转 | 无 | 左转让行/保护左转 |
+| 行人 | 简单过街 | 犹豫行为、二次过街 |
+
+### 6.4 Signal Phase Design (Current → Target)
+
+```
+当前（2相位）:
+  NS_GREEN → NS_YELLOW → ALL_RED → EW_GREEN → EW_YELLOW → ALL_RED
+
+目标（5+相位）:
+  NS_STRAIGHT → NS_LEFT → EW_STRAIGHT → EW_LEFT → PEDESTRIAN
+  + 每个相位之间的黄灯/全红过渡
+  + 感应式调整（排队长度动态决定相位时长）
+  + 公交优先（公交接近时延长绿灯）
 ```
 
 ---
