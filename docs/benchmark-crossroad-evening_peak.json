@@ -1,0 +1,44 @@
+{
+  "intersection_type": "crossroad",
+  "scenario": "evening_peak",
+  "steps": 300,
+  "strategies": {
+    "fixed": {
+      "name": "fixed",
+      "total_steps": 300,
+      "total_vehicles_generated": 581,
+      "total_vehicles_completed": 608,
+      "avg_wait_time": 18.27,
+      "throughput": 2.0267,
+      "adjustments_made": 0,
+      "llm_adjustments": 0,
+      "rule_adjustments": 0,
+      "duration_seconds": 0.03,
+      "pipeline_stats": {}
+    },
+    "rule": {
+      "name": "rule",
+      "total_steps": 300,
+      "total_vehicles_generated": 581,
+      "total_vehicles_completed": 643,
+      "avg_wait_time": 18.93,
+      "throughput": 2.1433,
+      "adjustments_made": 5,
+      "llm_adjustments": 0,
+      "rule_adjustments": 5,
+      "duration_seconds": 0.01,
+      "pipeline_stats": {
+        "total_decisions": 220,
+        "layer1_rules": 220,
+        "rule_rate": 1.0,
+        "layer2_cache": 0,
+        "layer3_llm": 0,
+        "free_rate": 1.0
+      }
+    }
+  },
+  "improvements": {
+    "rule_avg_wait": -3.62093752143489,
+    "rule_throughput": 5.756578947368422
+  }
+}

@@ -14,6 +14,9 @@ import sys
 
 def cmd_run(args) -> None:
     """Run a timing adjustment simulation."""
+    if args.multi_agent:
+        return cmd_run_multi_agent(args)
+
     from traffic_agent.simulation.sim_loop import TimingSimulation
 
     # Optionally create pipeline for LLM/rule decisions
@@ -102,6 +105,80 @@ def cmd_run(args) -> None:
     print("=" * 60)
 
 
+def cmd_run_multi_agent(args) -> None:
+    """Run multi-agent simulation with CrewAI."""
+    from traffic_agent.simulation.grid import GridSimulation
+    from traffic_agent.crew.traffic_crew import TrafficControlCrew, CrewConfig
+    from traffic_agent.llm.client import LLMConfig
+
+    print("  Multi-Agent mode (CrewAI)")
+    print(f"  Scenario: {args.scenario}")
+    print(f"  Steps: {args.steps}")
+    print()
+
+    # Create grid simulation (3x3 intersections)
+    sim = GridSimulation()
+
+    # Create crew config
+    llm_config = LLMConfig(
+        fast_model=args.model,
+        api_key=args.api_key,
+    )
+    crew_config = CrewConfig(llm=llm_config)
+
+    # Create multi-agent crew
+    intersection_ids = list(sim.intersections.keys())
+    graph = sim.get_graph()
+
+    crew = TrafficControlCrew(
+        intersection_ids=intersection_ids,
+        graph=graph,
+        config=crew_config,
+    )
+
+    print(f"  Intersections: {len(intersection_ids)}")
+    print(f"  Agents: {len(intersection_ids)} intersection + 1 coordinator")
+    print()
+
+    # Run simulation
+    total_decisions = 0
+    total_llm_calls = 0
+
+    for step in range(args.steps):
+        # Advance simulation
+        sim.step()
+
+        # Get decisions from multi-agent crew
+        decisions = crew.step(sim)
+        total_decisions += len(decisions)
+        total_llm_calls += crew._total_llm_calls
+
+        if args.verbose and step % 50 == 0:
+            print(f"  Step {step}: {len(decisions)} decisions made")
+
+    # Print report
+    metrics = crew.get_metrics()
+    print()
+    print("=" * 60)
+    print("  Multi-Agent Simulation Report")
+    print("=" * 60)
+    print(f"  Total steps: {args.steps}")
+    print(f"  Intersections: {len(intersection_ids)}")
+    print(f"  Total decisions: {metrics['total_decisions']}")
+    print(f"  LLM calls: {metrics['total_llm_calls']}")
+    print(f"  Cache hits: {metrics['total_cache_hits']}")
+    print(f"  Cache hit rate: {metrics['cache_hit_rate']:.2%}")
+    print()
+
+    if args.export:
+        import json
+        with open(args.export, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=2)
+        print(f"  Metrics exported to {args.export}")
+
+    print("=" * 60)
+
+
 def cmd_benchmark(args) -> None:
     """Run benchmark comparing strategies."""
     from traffic_agent.comparison.benchmark import TimingBenchmark
@@ -159,6 +236,7 @@ def main():
     run_parser.add_argument("--seed", type=int, default=42, help="Random seed")
     run_parser.add_argument("--llm", action="store_true", help="Enable LLM pipeline")
     run_parser.add_argument("--rule", action="store_true", help="Enable rule engine only")
+    run_parser.add_argument("--multi-agent", action="store_true", help="Enable multi-agent mode (CrewAI)")
     run_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model")
     run_parser.add_argument("--api-key", default=None, help="LLM API key")
     run_parser.add_argument("--ns-green", type=float, default=None, help="NS green duration override")

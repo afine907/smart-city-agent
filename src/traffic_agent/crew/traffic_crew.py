@@ -1,55 +1,41 @@
 """
-Traffic Control Crew — CrewAI orchestration for traffic management.
+Traffic Control Crew — CrewAI multi-agent orchestration for traffic management.
 
-This is the main entry point for the multi-agent system.
+Uses CrewAI framework to create agents for each intersection and a coordinator.
 """
 
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
+
+from crewai import Agent, Task, Crew, Process
 
 from traffic_agent.llm.client import LLMClient, LLMConfig
 from traffic_agent.llm.parser import ResponseParser, TrafficDecision
 from traffic_agent.optimization.cache import DecisionCache
 from traffic_agent.tools.traffic_tools import (
     IntersectionState,
-    CoordinationMessageTool,
-    EmergencyAlertTool,
     TRAFFIC_EXPERT_PROMPT,
     COORDINATOR_PROMPT,
 )
 from traffic_agent.crew.coordination import ConflictDetector
-from traffic_agent.visualization.events import EventCollector
 
 
 @dataclass
 class CrewConfig:
     """Configuration for the traffic control crew."""
     llm: LLMConfig = field(default_factory=LLMConfig)
-    decision_interval: float = 5.0     # Seconds between decisions
-    max_coordination_rounds: int = 3
+    decision_interval: float = 5.0
     enable_coordination: bool = True
     use_cache: bool = True
-    verbose: bool = False
 
 
 class TrafficControlCrew:
     """
-    Main orchestrator for LLM multi-agent traffic control.
+    CrewAI-based multi-agent orchestrator for traffic signal control.
 
-    Workflow per decision cycle:
-    1. Collect traffic states from simulation
-    2. Each intersection agent observes and decides (LLM call)
-    3. Coordinator agent resolves conflicts (LLM call)
-    4. Execute decisions in simulation
-    5. Record reasoning and metrics
-
-    Usage:
-        crew = TrafficControlCrew(intersections, graph, config)
-
-        # Decision cycle
-        decisions = crew.step(simulation_engine)
+    Uses CrewAI Agent, Task, and Crew classes for proper multi-agent coordination.
     """
 
     def __init__(
@@ -57,21 +43,15 @@ class TrafficControlCrew:
         intersection_ids: List[str],
         graph: Dict[str, List[str]],
         config: Optional[CrewConfig] = None,
-        collector: Optional[EventCollector] = None,
     ):
         self.intersection_ids = intersection_ids
         self.graph = graph
         self.config = config or CrewConfig()
-        self.collector = collector
 
-        # LLM client
+        # LLM client for direct calls (fallback)
         self.llm_client = LLMClient(self.config.llm)
 
-        # Tools
-        self.coordination_tool = CoordinationMessageTool()
-        self.emergency_tool = EmergencyAlertTool()
-
-        # Cache — from optimization module
+        # Cache
         self.cache: Optional[DecisionCache] = (
             DecisionCache(max_size=1000, ttl_seconds=60.0)
             if self.config.use_cache
@@ -85,12 +65,54 @@ class TrafficControlCrew:
         self._decision_history: List[Dict] = []
         self._last_cache_hit = False
 
-        # Try to create CrewAI agents (optional)
-        self._use_crewai = self._try_init_crewai()
+        # Create CrewAI agents
+        self._create_agents()
+
+    def _create_agents(self):
+        """Create CrewAI agents for each intersection and coordinator."""
+        from crewai.llms import LLM
+
+        self.intersection_agents: Dict[str, Agent] = {}
+        self.intersection_tasks: Dict[str, Task] = {}
+
+        # Create LLM instances using our config
+        fast_llm = LLM(
+            model=f"openai/{self.config.llm.fast_model}",
+            api_key=self.config.llm.api_key,
+            base_url=self.config.llm.api_base,
+        )
+        smart_llm = LLM(
+            model=f"openai/{self.config.llm.smart_model}",
+            api_key=self.config.llm.api_key,
+            base_url=self.config.llm.api_base,
+        )
+
+        for ix_id in self.intersection_ids:
+            neighbors = self.graph.get(ix_id, [])
+
+            agent = Agent(
+                role=f"Traffic Signal Controller for {ix_id}",
+                goal=f"Minimize vehicle wait time at {ix_id} intersection while coordinating with neighbors: {neighbors}",
+                backstory=TRAFFIC_EXPERT_PROMPT.format(intersection_id=ix_id),
+                verbose=False,
+                allow_delegation=False,
+                llm=fast_llm,
+            )
+            self.intersection_agents[ix_id] = agent
+
+        # Coordinator agent
+        self.coordinator_agent = Agent(
+            role="Traffic Coordination Supervisor",
+            goal="Resolve conflicts between intersection agents and optimize city-wide traffic flow",
+            backstory=COORDINATOR_PROMPT,
+            verbose=False,
+            allow_delegation=False,
+            llm=smart_llm,
+        )
 
     def step(self, engine) -> List[Dict[str, Any]]:
         """
-        Execute one decision cycle.
+        Execute one decision cycle using CrewAI.
 
         Args:
             engine: SimulationEngine or GridSimulation instance
@@ -104,22 +126,6 @@ class TrafficControlCrew:
         states: Dict[str, IntersectionState] = {}
         for ix_id in self.intersection_ids:
             states[ix_id] = engine.get_state(ix_id)
-            if self.collector:
-                state = states[ix_id]
-                self.collector.emit_thinking(
-                    agent_id=ix_id,
-                    thought=f"Analyzing traffic at {ix_id}",
-                    context={
-                        "queue_lengths": {
-                            "north": state.queue_north,
-                            "south": state.queue_south,
-                            "east": state.queue_east,
-                            "west": state.queue_west,
-                        },
-                        "current_phase": state.current_phase,
-                        "avg_wait": state.avg_wait_time,
-                    },
-                )
 
         # 2. Each agent makes independent decision
         agent_decisions: Dict[str, TrafficDecision] = {}
@@ -128,18 +134,6 @@ class TrafficControlCrew:
             decision = self._agent_decide(ix_id, states[ix_id], states)
             duration_ms = (time.time() - t0) * 1000
             agent_decisions[ix_id] = decision
-
-            if self.collector:
-                self.collector.emit_decision(
-                    agent_id=ix_id,
-                    decision={
-                        "phase": decision.phase,
-                        "duration": decision.duration,
-                        "reasoning": decision.reasoning,
-                        "cache_hit": self._last_cache_hit,
-                    },
-                    duration_ms=duration_ms,
-                )
 
         # 3. Coordinate if enabled
         if self.config.enable_coordination:
@@ -160,7 +154,6 @@ class TrafficControlCrew:
             "decisions": decisions,
         })
 
-        # Keep history manageable
         if len(self._decision_history) > 1000:
             self._decision_history = self._decision_history[-500:]
 
@@ -172,7 +165,7 @@ class TrafficControlCrew:
         state: IntersectionState,
         all_states: Dict[str, IntersectionState],
     ) -> TrafficDecision:
-        """Get decision from an intersection agent."""
+        """Get decision from an intersection agent using CrewAI."""
 
         self._last_cache_hit = False
 
@@ -184,7 +177,7 @@ class TrafficControlCrew:
                 self._last_cache_hit = True
                 return cached
 
-        # Build prompt
+        # Build neighbor info
         neighbor_ids = self.graph.get(intersection_id, [])
         neighbor_text = "\n".join(
             f"  {nid}: 排队{all_states[nid].get_total_queue()}辆, "
@@ -192,28 +185,34 @@ class TrafficControlCrew:
             for nid in neighbor_ids if nid in all_states
         )
 
-        user_message = f"""当前路况：
+        # Create task for this intersection
+        task_description = f"""当前路况：
 {state.to_text()}
 
 邻居路口：
 {neighbor_text}
 
-请做出信号灯决策（JSON格式）。"""
+请做出信号灯决策（JSON格式）：{{"action": "extend_green/switch_phase", "phase": "NS_GREEN/EW_GREEN", "duration": 秒数, "reasoning": "理由"}}"""
 
-        # Call LLM
-        response = self.llm_client.chat(
-            system_prompt=TRAFFIC_EXPERT_PROMPT.format(
-                intersection_id=intersection_id
-            ),
-            user_message=user_message,
-            model=self.config.llm.fast_model,
-            temperature=0.3,
+        task = Task(
+            description=task_description,
+            agent=self.intersection_agents[intersection_id],
+            expected_output="JSON decision with action/phase/duration/reasoning",
         )
 
+        # Run single-agent crew
+        crew = Crew(
+            agents=[self.intersection_agents[intersection_id]],
+            tasks=[task],
+            process=Process.sequential,
+            verbose=False,
+        )
+
+        result = crew.kickoff()
         self._total_llm_calls += 1
 
         # Parse response
-        decision = ResponseParser.parse(response.content)
+        decision = ResponseParser.parse(str(result))
         if decision is None:
             decision = ResponseParser.fallback("LLM响应解析失败")
 
@@ -236,16 +235,7 @@ class TrafficControlCrew:
         if not conflicts:
             return decisions
 
-        # Emit conflict events
-        if self.collector:
-            for agent1, agent2, conflict_type in conflicts:
-                self.collector.emit_conflict(
-                    agent_id=agent1,
-                    conflict_type=conflict_type,
-                    details=f"Conflict with {agent2}: {conflict_type}",
-                )
-
-        # Build coordination prompt
+        # Build coordination task
         decisions_text = "\n".join(
             f"{ix_id}: {d.to_dict()}"
             for ix_id, d in decisions.items()
@@ -256,7 +246,7 @@ class TrafficControlCrew:
             for ix_id, s in states.items()
         )
 
-        user_message = f"""各路口决策：
+        task_description = f"""各路口决策：
 {decisions_text}
 
 各路口状态：
@@ -267,44 +257,46 @@ class TrafficControlCrew:
 
 请协调解决冲突，输出最终决策（JSON格式）。"""
 
-        # Call coordinator LLM
-        response = self.llm_client.chat(
-            system_prompt=COORDINATOR_PROMPT,
-            user_message=user_message,
-            model=self.config.llm.smart_model,
-            temperature=0.2,
+        task = Task(
+            description=task_description,
+            agent=self.coordinator_agent,
+            expected_output="Coordinated JSON decisions",
         )
 
+        # Run coordinator crew
+        crew = Crew(
+            agents=[self.coordinator_agent],
+            tasks=[task],
+            process=Process.sequential,
+            verbose=False,
+        )
+
+        result = crew.kickoff()
         self._total_llm_calls += 1
 
         # Parse coordinator response
         try:
-            data = json.loads(response.content)
-            coordinated = {}
-            for d in data.get("decisions", []):
-                ix_id = d.get("intersection_id")
-                if ix_id in decisions:
-                    decision = ResponseParser.parse(json.dumps(d))
-                    if decision:
-                        coordinated[ix_id] = decision
+            content = str(result)
+            start = content.find("{")
+            end = content.rfind("}") + 1
+            if start >= 0 and end > start:
+                data = json.loads(content[start:end])
+                coordinated = {}
+                for d in data.get("decisions", []):
+                    ix_id = d.get("intersection_id")
+                    if ix_id in decisions:
+                        decision = ResponseParser.parse(json.dumps(d))
+                        if decision:
+                            coordinated[ix_id] = decision
+                        else:
+                            coordinated[ix_id] = decisions[ix_id]
                     else:
                         coordinated[ix_id] = decisions[ix_id]
-                else:
-                    coordinated[ix_id] = decisions[ix_id]
+                return coordinated
+        except (json.JSONDecodeError, ValueError):
+            pass
 
-            # Emit coordination events
-            if self.collector:
-                for ix_id in coordinated:
-                    if ix_id in decisions and coordinated[ix_id].phase != decisions[ix_id].phase:
-                        self.collector.emit_coordination(
-                            agent_id="coordinator",
-                            target_id=ix_id,
-                            message=f"Phase changed: {decisions[ix_id].phase} → {coordinated[ix_id].phase}",
-                        )
-
-            return coordinated
-        except (json.JSONDecodeError, KeyError):
-            return decisions  # Fall back to original decisions
+        return decisions
 
     def _format_conflicts(self, conflicts: list) -> str:
         return "\n".join(
@@ -312,36 +304,11 @@ class TrafficControlCrew:
             for c in conflicts
         )
 
-    def _try_init_crewai(self) -> bool:
-        """Try to initialize CrewAI agents."""
-        try:
-            from traffic_agent.agents.intersection import (
-                IntersectionAgentFactory,
-                CoordinatorAgentFactory,
-            )
-
-            self.crewai_agents = {}
-            for ix_id in self.intersection_ids:
-                neighbors = self.graph.get(ix_id, [])
-                self.crewai_agents[ix_id] = IntersectionAgentFactory.create(
-                    ix_id, neighbors, self.config.llm
-                )
-
-            self.coordinator_agent = CoordinatorAgentFactory.create(
-                self.intersection_ids, self.config.llm
-            )
-
-            return True
-        except (ImportError, Exception):
-            return False
-
     def get_metrics(self) -> Dict[str, Any]:
         """Return crew metrics."""
         cache_hit_rate = (
             self._total_cache_hits / max(1, self._total_decisions)
         )
-
-        cache_stats = self.cache.stats if self.cache else None
 
         return {
             "total_decisions": self._total_decisions,

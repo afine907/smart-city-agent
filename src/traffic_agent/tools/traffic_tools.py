@@ -1,16 +1,12 @@
 """
-Agent Tools — Tools for CrewAI agents to interact with the simulation.
+Traffic Tools — Shared data structures and prompt templates.
 
-Each tool represents a capability that an agent can use:
-- Observe traffic state
-- Send messages to neighbors
-- Check for emergencies
+IntersectionState is used across the codebase for traffic state representation.
+Prompts are used by the multi-agent coordination system.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
-
-import numpy as np
+from typing import Optional
 
 
 # ─── Prompt Templates ──────────────────────────────────────────
@@ -80,32 +76,34 @@ COORDINATOR_PROMPT = """你是城市交通协调主管，负责协调多个路�
 """
 
 
+# ─── Data Structures ──────────────────────────────────────────
+
 @dataclass
 class IntersectionState:
     """Current state of an intersection."""
     intersection_id: str
     timestamp: float
-    
+
     # Queue lengths per approach (N, E, S, W)
     queue_north: int = 0
     queue_south: int = 0
     queue_east: int = 0
     queue_west: int = 0
-    
+
     # Wait times per approach
     wait_north: float = 0.0
     wait_south: float = 0.0
     wait_east: float = 0.0
     wait_west: float = 0.0
-    
+
     # Signal state
     current_phase: str = "NS_GREEN"
     phase_duration: float = 0.0
-    
+
     # Special conditions
     emergency: bool = False
     emergency_approach: Optional[int] = None
-    
+
     def to_text(self) -> str:
         """Format state as human-readable text for LLM."""
         return f"""路口: {self.intersection_id}
@@ -120,107 +118,9 @@ class IntersectionState:
 当前信号: {self.current_phase}, 已持续{self.phase_duration:.0f}s
 紧急车辆: {'有' if self.emergency else '无'}
 """
-    
+
     def get_max_queue(self) -> int:
         return max(self.queue_north, self.queue_south, self.queue_east, self.queue_west)
-    
+
     def get_total_queue(self) -> int:
         return self.queue_north + self.queue_south + self.queue_east + self.queue_west
-
-
-class TrafficObservationTool:
-    """
-    Tool for agents to observe traffic state.
-    
-    In CrewAI, this would be a BaseTool subclass.
-    Here we implement it standalone for flexibility.
-    """
-    
-    name: str = "observe_traffic"
-    description: str = "获取当前路口的实时交通数据"
-    
-    def __init__(self, simulation_engine=None):
-        self.engine = simulation_engine
-    
-    def run(self, intersection_id: str) -> str:
-        """Observe traffic state at an intersection."""
-        if self.engine is None:
-            return "仿真引擎未初始化"
-        
-        state = self.engine.get_state(intersection_id)
-        return state.to_text()
-
-
-class NeighborStateTool:
-    """Tool for agents to check neighbor intersection states."""
-    
-    name: str = "check_neighbors"
-    description: str = "获取邻居路口的状态"
-    
-    def __init__(self, simulation_engine=None):
-        self.engine = simulation_engine
-    
-    def run(self, intersection_id: str, neighbor_ids: list) -> str:
-        """Get states of neighbor intersections."""
-        if self.engine is None:
-            return "仿真引擎未初始化"
-        
-        lines = [f"邻居路口状态 ({len(neighbor_ids)} 个):"]
-        for nid in neighbor_ids:
-            state = self.engine.get_state(nid)
-            lines.append(f"  {nid}: 排队{state.get_total_queue()}辆, "
-                        f"信号{state.current_phase}")
-        
-        return "\n".join(lines)
-
-
-class CoordinationMessageTool:
-    """Tool for agents to send coordination messages."""
-    
-    name: str = "send_message"
-    description: str = "向邻居路口发送协调消息"
-    
-    def __init__(self):
-        self.messages: Dict[str, list] = {}  # recipient -> [messages]
-    
-    def run(self, sender: str, recipient: str, message: str) -> str:
-        """Send a coordination message."""
-        if recipient not in self.messages:
-            self.messages[recipient] = []
-        self.messages[recipient].append({
-            "from": sender,
-            "message": message,
-        })
-        return f"消息已发送给 {recipient}"
-    
-    def get_messages(self, recipient: str) -> list:
-        """Get all messages for an agent."""
-        return self.messages.pop(recipient, [])
-    
-    def clear(self):
-        self.messages.clear()
-
-
-class EmergencyAlertTool:
-    """Tool for emergency vehicle alerts."""
-    
-    name: str = "alert_emergency"
-    description: str = "广播紧急车辆警报"
-    
-    def __init__(self):
-        self.alerts: list = []
-    
-    def run(self, intersection_id: str, approach: int, 
-            vehicle_type: str = "救护车") -> str:
-        """Broadcast emergency alert."""
-        self.alerts.append({
-            "intersection": intersection_id,
-            "approach": approach,
-            "type": vehicle_type,
-        })
-        return f"紧急警报已广播: {vehicle_type}从{intersection_id}的approach {approach}接近"
-    
-    def get_alerts(self) -> list:
-        alerts = self.alerts.copy()
-        self.alerts.clear()
-        return alerts
