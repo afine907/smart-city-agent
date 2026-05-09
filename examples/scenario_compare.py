@@ -1,5 +1,5 @@
 """
-Scenario Comparison — compare LLM vs fixed timing across scenarios.
+Scenario Comparison — compare fixed vs rule timing across scenarios.
 
 Runs all 4 scenarios and produces a comparison table.
 
@@ -17,60 +17,57 @@ from traffic_agent.scenarios.runner import ScenarioRunner
 
 
 def main():
-    print("🚦 Multi-Scenario Comparison\n")
+    print("Traffic Scenario Comparison\n")
     print("=" * 60)
 
     results = []
 
     for name, scenario in ALL_SCENARIOS.items():
-        # Shorten phases for demo
-        short_scenario = ScenarioConfig(
+        # Shorten for demo
+        short = ScenarioConfig(
             name=scenario.name,
             description=scenario.description,
-            phases=[
-                type(p)(
-                    name=p.name,
-                    duration_steps=min(p.duration_steps, 30),
-                    arrival_rate=p.arrival_rate,
-                    emergency_rate=p.emergency_rate,
-                    direction_bias=p.direction_bias,
-                    description=p.description,
-                )
-                for p in scenario.phases[:1]
-            ],
+            phases=scenario.phases[:1],
             seed=42,
-            total_steps=30,
+            total_steps=50,
         )
+        short.phases[0].duration_steps = 50
 
-        print(f"\n🔴 Running fixed timing: {name}")
-        runner = ScenarioRunner(short_scenario)
-        fixed = runner.run_with_fixed()
+        runner = ScenarioRunner(short)
 
-        print(f"🧠 Running LLM agents: {name}")
-        llm = runner.run_with_llm()
+        print(f"\n  Running fixed timing: {name}")
+        fixed = runner.run_fixed()
 
-        results.append((name, fixed, llm))
+        print(f"  Running rule engine: {name}")
+        rule = runner.run_rule()
+
+        results.append((name, fixed, rule))
 
     # Print comparison table
     print("\n" + "=" * 60)
-    print(f"{'场景':<15} {'指标':<15} {'固定配时':>10} {'LLM':>10} {'改善':>8}")
+    print(f"{'Scenario':<15} {'Metric':<20} {'Fixed':>10} {'Rule':>10} {'Change':>8}")
     print("-" * 60)
 
-    for name, fixed, llm in results:
-        for metric in ["avg_wait_time", "throughput", "total_queue"]:
-            f_val = fixed.metrics.get(metric, 0)
-            l_val = llm.metrics.get(metric, 0)
+    for name, fixed, rule in results:
+        f = fixed.report
+        r = rule.report
 
+        for metric, label in [
+            ("avg_wait_time", "Avg Wait (s)"),
+            ("throughput", "Throughput (/s)"),
+            ("total_vehicles_completed", "Completed"),
+        ]:
+            f_val = getattr(f, metric)
+            r_val = getattr(r, metric)
             if f_val > 0:
-                if metric in ["avg_wait_time", "total_queue"]:
-                    improvement = (f_val - l_val) / f_val * 100
-                else:
-                    improvement = (l_val - f_val) / f_val * 100
-                print(f"{name:<15} {metric:<15} {f_val:>10.1f} {l_val:>10.1f} {improvement:>+7.1f}%")
+                change = (r_val - f_val) / f_val * 100
+                if metric == "avg_wait_time":
+                    change = -change  # lower is better
+                print(f"{name:<15} {label:<20} {f_val:>10.2f} {r_val:>10.2f} {change:>+7.1f}%")
         print()
 
     print("=" * 60)
-    print("✅ 对比完成")
+    print("Done")
 
 
 if __name__ == "__main__":

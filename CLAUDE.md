@@ -4,89 +4,113 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LLM Traffic Controller — a multi-agent traffic signal control system using CrewAI agents with LLM-powered decision making. Supports both a 3×3 grid simulation and real OpenStreetMap road networks (Manhattan, Wuhan, Shenzhen presets). The system layers rule-based fallbacks, decision caching, and LLM API calls to minimize cost while maintaining decision quality.
+LLM Traffic Timing Assistant — uses LLM to fine-tune traffic signal timing by ±10 seconds based on real-time detector data (vehicles, pedestrians, bicycles). Keeps fixed baseline timing and adds an AI adjustment layer on top. Supports crossroad and T-junction intersections.
+
+The system uses a 3-tier decision pipeline: rule engine (free) → decision cache (free) → LLM call (paid). About 70%+ of decisions are handled by rules and cache.
 
 ## Common Commands
 
 ```bash
-# Install (editable mode)
+# Install
 pip install -e ".[llm,dev]"
 # or
 uv sync
 
-# Run simulation (no LLM required)
-python -m traffic_agent.cli run --steps 50
-python -m traffic_agent.cli run --scenario grid_3x3 --steps 200 --verbose
+# Run simulation (no LLM, rule engine only)
+python -m traffic_agent.cli run --steps 200
+python -m traffic_agent.cli run --type crossroad --scenario morning_peak --steps 300
 
-# Start SSE dashboard (serves at http://localhost:8080)
-python -m traffic_agent.cli simulate --steps 200 --port 8080
-python -m traffic_agent.cli simulate --preset manhattan --steps 200
+# Run simulation with LLM adjustments
+python -m traffic_agent.cli run --steps 200 --llm
 
-# Compare LLM vs fixed timing
-python -m traffic_agent.cli compare --model gpt-4o-mini
+# Run benchmark: fixed vs rule vs LLM pipeline
+python -m traffic_agent.cli benchmark --steps 500
 
-# Run preset scenarios
-python -m traffic_agent.cli scenario morning_peak --mode compare
-python -m traffic_agent.cli scenario accident --mode llm
+# List available scenarios
+python -m traffic_agent.cli scenarios
 
-# Run quality benchmark (no LLM)
-python -m traffic_agent.cli benchmark --preset shenzhen --steps 200
+# Export decision log
+python -m traffic_agent.cli run --steps 200 --export log.json
 
-# OSM network simulation
-python -m traffic_agent.cli osm wuhan --steps 200
-
-# Complex intersection demo
-python -m traffic_agent.cli demo --scenario rush_ns --steps 200
+# Run old-style grid/OSM simulations (legacy)
+python -m traffic_agent.cli run --scenario grid_3x3 --steps 50
+python -m traffic_agent.cli osm manhattan --steps 200
 
 # Tests
 python -m pytest tests/ -v
-python -m pytest tests/test_grid.py -v     # single module
-python -m pytest tests/test_core.py -v     # specific test file
+python -m pytest tests/test_signal_controller.py -v
+python -m pytest tests/test_timing_rules.py -v
+python -m pytest tests/test_sim_loop.py -v
 ```
 
 ## Architecture
+
+### Core Concept: ±10s Timing Adjustment
+
+The LLM does NOT control the signal. It suggests adjustments of ±10 seconds to the baseline timing. Safety constraints: min green 15s, max green 90s, adjustment clamped to [-10, +10].
 
 ### Package Layout
 
 ```
 src/traffic_agent/
-├── simulation/         # Core simulation engines
-│   ├── engine.py       #   Base data structures (Vehicle, Intersection, SimulationEngine)
-│   ├── grid.py         #   3×3 grid simulation (GridSimulation)
-│   ├── osm.py          #   OpenStreetMap network loader (OSMNetwork, presets)
-│   ├── osm_sim.py      #   OSM-based simulation (OSMSimulation)
-│   ├── router.py       #   Dijkstra shortest-path routing (RoutePlanner)
-│   └── complex_intersection.py  # 4-way intersection with 8-phase NEMA signals
-├── agents/             # CrewAI agent definitions
-├── crew/               # CrewAI orchestration + coordination (TrafficControlCrew)
-├── llm/                # LLM client (client.py) + JSON response parser (parser.py)
-├── optimization/       # 3-tier decision pipeline: rule_engine → cache → LLM
-├── scenarios/          # Preset traffic scenarios (morning_peak, accident, etc.)
-├── comparison/         # Benchmark framework for fixed vs LLM vs adaptive
-├── visualization/      # SSE events (events.py), runner, and 6 HTML dashboards
-├── api/                # FastAPI SSE server (sse_server.py)
-├── tools/              # Agent tools (IntersectionState, observation, communication)
-└── cli.py              # CLI entry point — all commands
+├── simulation/              # Core simulation
+│   ├── signal_controller.py # Signal controller + baseline timing + ±10s adjustment
+│   ├── detector.py          # Detector model + trend analysis
+│   ├── scenarios.py         # Traffic scenario definitions (6 presets)
+│   ├── sim_loop.py          # Simulation main loop (TimingSimulation)
+│   ├── engine.py            # Base simulation data structures (legacy)
+│   ├── grid.py              # 3×3 grid simulation (legacy)
+│   └── osm*.py              # OpenStreetMap network simulation (legacy)
+├── llm/
+│   ├── client.py            # LLM client (OpenAI-compatible)
+│   ├── parser.py            # TimingAdjustment parsing + validation
+│   └── prompts.py           # LLM prompt templates
+├── optimization/
+│   ├── rule_engine.py       # 6-rule engine for fast decisions
+│   ├── layered.py           # 3-tier pipeline: rules → cache → LLM
+│   ├── cache.py             # LRU + TTL decision cache
+│   └── cost_tracker.py      # LLM cost tracking
+├── scenarios/
+│   ├── presets.py           # Old-style scenario configs (GridSimulation)
+│   └── runner.py            # Scenario runner (bridges to TimingSimulation)
+├── comparison/
+│   └── benchmark.py         # Benchmark: fixed vs rule vs pipeline
+├── visualization/           # SSE events + HTML dashboards
+├── api/                     # FastAPI SSE server
+└── cli.py                   # CLI entry point
 ```
 
-### Key Design Patterns
+### Key Classes
 
-**Dual Simulation Engines**: `SimulationEngine` (engine.py) is the base with a simple per-intersection vehicle model. `GridSimulation` (grid.py) extends it with road segments and inter-intersection vehicle routing. `OSMSimulation` (osm_sim.py) works on real OSM topologies with Dijkstra routing. `ComplexIntersection` (complex_intersection.py) models a single intersection with 8-phase NEMA signals, left/through/right lanes.
-
-**3-Tier Decision Pipeline** (optimization/): Rule engine (free, <1ms) → decision cache (free, ~40% hit rate) → LLM API call (paid). The layered orchestrator in `layered.py` routes decisions through these tiers automatically.
-
-**SSE Visualization Pipeline**: `SimulationRunner` (visualization/runner.py) drives the simulation and emits typed events via `EventCollector`. The FastAPI server (api/sse_server.py) streams these to the browser via `/api/events/stream`. Six dashboard variants exist in `visualization/*.html` (Tesla-style is the default at `/`).
-
-**Network Topology**: Grid simulations use `ix_{row}_{col}` IDs. OSM simulations use real intersection IDs with lat/lon coordinates. Preset networks are defined as Python dicts in `osm.py` (SMALL_MANHATTAN, WUHAN_OPTICS_VALLEY, SHENZHEN_LIUXIANDONG).
+- `SignalController` — manages signal state, applies ±10s adjustments, enforces safety constraints
+- `DetectorSimulator` — generates detector readings from simulation vehicles
+- `TrendAnalyzer` — tracks traffic flow trends over sliding window
+- `TimingRuleEngine` — 6 rules for instant decisions (low traffic, high queue, pedestrians, etc.)
+- `TimingDecisionPipeline` — 3-layer orchestrator: rules → cache → LLM
+- `TimingSimulation` — ties everything together into a simulation loop
+- `TimingBenchmark` — runs fixed/rule/pipeline strategies and compares results
+- `TimingAdjustment` — LLM output: `{adjustment, reasoning, confidence, alerts}`
 
 ### Signal Phases
 
-- Grid/Engine: Simple 2-phase — `NS_GREEN` / `EW_GREEN` (approaches 0,2 = N,S; 1,3 = E,W)
-- Complex Intersection: 8-phase NEMA — `NS_LEFT` → `NS_THROUGH` → `NS_YELLOW` → `ALL_RED_1` → `EW_LEFT` → `EW_THROUGH` → `EW_YELLOW` → `ALL_RED_2`
+Crossroad: `NS_GREEN` → `NS_YELLOW` → `ALL_RED` → `EW_GREEN` → `EW_YELLOW` → `ALL_RED`
+T-junction: `NS_GREEN` → `NS_YELLOW` → `ALL_RED` → `EW_GREEN` → `EW_YELLOW`
+
+Green approaches: 0=north, 1=east, 2=south, 3=west
+
+### Traffic Scenarios
+
+Defined in `simulation/scenarios.py` with `TrafficPhase` and `TrafficScenario`:
+- `morning_peak` — heavy NS flow, ramp up → peak → ramp down
+- `evening_peak` — heavy EW flow
+- `normal` — balanced
+- `pedestrian_heavy` — high pedestrian volume
+- `accident` — emergency vehicles + congestion
+- `bicycle_rush` — bicycle rush hour
 
 ### LLM Configuration
 
-Defaults to LongCat API (OpenAI-compatible). Set via environment:
+Supports OpenAI-compatible API. Set via environment:
 - `OPENAI_API_KEY` or `LONGCAT_API_KEY` — API key
 - `OPENAI_API_BASE` or `LONGCAT_API_BASE` — custom base URL
 
@@ -94,4 +118,17 @@ The LLM client (`llm/client.py`) loads `.env` from project root if present.
 
 ## Testing
 
-Tests are in `tests/` with 164+ tests. No external services required for the core/grid/osm/scenario tests. LLM-dependent tests use mocks. Run with `python -m pytest tests/ -v`. Coverage: `python -m pytest tests/ --cov=traffic_agent`.
+248 tests in `tests/`. No external services required for core tests. LLM-dependent tests use mocks.
+
+```bash
+python -m pytest tests/ -v                        # all tests
+python -m pytest tests/test_signal_controller.py  # signal controller
+python -m pytest tests/test_timing_rules.py       # rule engine + parser
+python -m pytest tests/test_sim_loop.py           # simulation loop
+python -m pytest tests/test_comparison.py         # benchmark framework
+python -m pytest tests/test_scenarios.py          # scenario presets + runner
+python -m pytest tests/test_optimization.py       # cache, cost tracker, pipeline
+python -m pytest tests/test_detector.py           # detector + trend analyzer
+```
+
+Coverage: `python -m pytest tests/ --cov=traffic_agent`

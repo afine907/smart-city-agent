@@ -86,42 +86,40 @@ class TestScenarioPresets:
 
 
 class TestScenarioRunner:
-    """Test ScenarioRunner with fixed timing."""
+    """Test ScenarioRunner with the new timing architecture."""
 
     def test_fixed_normal_scenario(self):
         """Normal scenario with fixed timing should run without errors."""
-        scenario = create_scenario("normal", total_steps=50)
-        # Override phases to be shorter
         scenario = ScenarioConfig(
-            name=scenario.name,
-            description=scenario.description,
-            phases=scenario.phases[:1],  # Just first phase
-            seed=42,
-            total_steps=50,
-        )
-        scenario.phases[0].duration_steps = 50
-
-        runner = ScenarioRunner(scenario)
-        result = runner.run_with_fixed()
-
-        assert result.name == "fixed_normal"
-        assert result.steps == 50
-        assert "avg_wait_time" in result.metrics
-        assert result.duration_seconds >= 0
-
-    def test_fixed_accident_scenario(self):
-        """Accident scenario with fixed timing should run."""
-        scenario = ScenarioConfig(
-            name="accident_test",
+            name="normal",
             description="test",
-            phases=SCENARIO_ACCIDENT.phases[:1],
+            phases=SCENARIO_NORMAL.phases[:1],
             seed=42,
             total_steps=30,
         )
         scenario.phases[0].duration_steps = 30
 
         runner = ScenarioRunner(scenario)
-        result = runner.run_with_fixed()
+        result = runner.run_fixed()
 
-        assert result.steps == 30
-        assert "vehicles_generated" in result.metrics
+        assert result.name == "fixed_normal"
+        assert result.report.total_steps == 30
+        assert result.report.avg_wait_time >= 0
+        assert result.duration_seconds >= 0
+
+    def test_rule_normal_scenario(self):
+        """Normal scenario with rule engine should run."""
+        scenario = ScenarioConfig(
+            name="normal",
+            description="test",
+            phases=SCENARIO_NORMAL.phases[:1],
+            seed=42,
+            total_steps=30,
+        )
+        scenario.phases[0].duration_steps = 30
+
+        runner = ScenarioRunner(scenario)
+        result = runner.run_rule()
+
+        assert result.name == "rule_normal"
+        assert result.report.total_steps == 30

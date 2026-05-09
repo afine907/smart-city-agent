@@ -31,41 +31,43 @@ class CacheStats:
 class DecisionCache:
     """
     LRU cache with TTL expiration for traffic decisions.
-    
-    Key: coarse-grained state hash (queue bins + current phase)
-    Value: TrafficDecision + timestamp
-    
+
+    Key: string key (e.g., coarse-grained state hash)
+    Value: decision object + timestamp
+
     Usage:
         cache = DecisionCache(max_size=1000, ttl_seconds=60)
-        
-        decision = cache.get(state)
+
+        decision = cache.get(state_or_key)
         if decision is None:
             decision = call_llm(state)
-            cache.set(state, decision)
+            cache.set(state_or_key, decision)
     """
-    
+
     def __init__(self, max_size: int = 1000, ttl_seconds: float = 60.0):
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
         self._cache: OrderedDict[str, tuple] = OrderedDict()
         self._stats = CacheStats()
-    
-    def _state_key(self, state: IntersectionState) -> str:
-        """Generate cache key from state (coarse-grained bins)."""
-        # Round queue lengths to bins of 3 to increase cache hits
+
+    def _to_key(self, state_or_key) -> str:
+        """Convert state or string to cache key."""
+        if isinstance(state_or_key, str):
+            return state_or_key
+        # Assume IntersectionState
         return (
-            f"{state.queue_north // 3}_{state.queue_south // 3}_"
-            f"{state.queue_east // 3}_{state.queue_west // 3}_"
-            f"{state.current_phase}"
+            f"{state_or_key.queue_north // 3}_{state_or_key.queue_south // 3}_"
+            f"{state_or_key.queue_east // 3}_{state_or_key.queue_west // 3}_"
+            f"{state_or_key.current_phase}"
         )
-    
-    def get(self, state: IntersectionState) -> Optional[TrafficDecision]:
+
+    def get(self, state_or_key) -> Optional:
         """Get cached decision if available and not expired."""
-        key = self._state_key(state)
-        
+        key = self._to_key(state_or_key)
+
         if key in self._cache:
             decision, timestamp = self._cache[key]
-            
+
             # Check TTL
             if time.time() - timestamp < self.ttl_seconds:
                 # Move to end (most recently used)
@@ -75,18 +77,18 @@ class DecisionCache:
             else:
                 # Expired
                 del self._cache[key]
-        
+
         self._stats.misses += 1
         return None
-    
-    def set(self, state: IntersectionState, decision: TrafficDecision) -> None:
+
+    def set(self, state_or_key, decision) -> None:
         """Cache a decision."""
-        key = self._state_key(state)
-        
+        key = self._to_key(state_or_key)
+
         # Evict oldest if at capacity
         if len(self._cache) >= self.max_size:
             self._cache.popitem(last=False)
-        
+
         self._cache[key] = (decision, time.time())
     
     def clear(self) -> None:
