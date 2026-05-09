@@ -1,6 +1,6 @@
 # Architecture — LLM Traffic Timing Assistant
 
-> **System Design Document — ±10s Timing Adjustment**
+> **System Design Document — ±10s Timing Adjustment + CrewAI Multi-Agent**
 
 ## Table of Contents
 
@@ -8,10 +8,11 @@
 2. [System Overview](#system-overview)
 3. [Core Components](#core-components)
 4. [3-Tier Decision Pipeline](#3-tier-decision-pipeline)
-5. [Simulation Engine](#simulation-engine)
-6. [Safety Constraints](#safety-constraints)
-7. [Observability](#observability)
-8. [Cost & Performance](#cost--performance)
+5. [Multi-Agent Architecture (CrewAI)](#multi-agent-architecture-crewai)
+6. [Simulation Engine](#simulation-engine)
+7. [Safety Constraints](#safety-constraints)
+8. [Observability](#observability)
+9. [Cost & Performance](#cost--performance)
 
 ---
 
@@ -260,7 +261,112 @@ class TimingAdjustment:
 
 ---
 
-## 5. Simulation Engine
+## 5. Multi-Agent Architecture (CrewAI)
+
+### 5.1 Overview
+
+The multi-agent path extends the single-intersection design to a 3×3 grid of intersections, each controlled by a dedicated CrewAI Agent. The same 3-tier pipeline (rules → cache → LLM) runs inside the CrewAI framework.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  CrewAI Multi-Agent System                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │ Agent: ix_0_0 │  │ Agent: ix_0_1 │  │ Agent: ix_0_2 │          │
+│  │ 4 tools       │  │ 4 tools       │  │ 4 tools       │          │
+│  │ fast_llm      │  │ fast_llm      │  │ fast_llm      │          │
+│  └───────┬──────┘  └───────┬──────┘  └───────┬──────┘          │
+│          │                 │                 │                   │
+│          │   ┌─────────────┴─────────────┐   │                   │
+│          │   │    3-Tier Pipeline         │   │                   │
+│          │   │  L1: Rules (free)          │   │                   │
+│          │   │  L2: Cache (free)          │   │                   │
+│          │   │  L3: CrewAI LLM (paid)     │   │                   │
+│          │   └─────────────┬─────────────┘   │                   │
+│          │                 │                 │                   │
+│          ▼                 ▼                 ▼                   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │              Coordinator Agent                           │    │
+│  │  smart_llm · 3 tools · conflict resolution              │    │
+│  └─────────────────────────────────────────────────────────┘    │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 5.2 CrewAI Tools (6 tools)
+
+Each intersection Agent has 4 tools; the Coordinator has 3:
+
+| Tool | Agent | Coordinator | Description |
+|------|:-----:|:-----------:|-------------|
+| Get Intersection State | ✓ | ✓ | Real-time queue, wait, phase, emergency |
+| Get Neighbor States | ✓ | ✓ | Summary of adjacent intersections |
+| Apply Timing Adjustment | ✓ | | ±10s green phase adjustment |
+| Apply Signal Decision | ✓ | | Direct phase switch (NS_GREEN/EW_GREEN) |
+| Check Conflicts | | ✓ | Detect phase mismatches between neighbors |
+| Get Traffic Trend | ✓ | | Directional queue trend analysis |
+
+Tools are implemented with the `@tool` decorator and access the simulation via a shared `SimulationState` container.
+
+### 5.3 Agent Configuration
+
+```python
+# Intersection Agent
+Agent(
+    role="Traffic Signal Controller for {ix_id}",
+    goal="Minimize wait time while coordinating with neighbors",
+    backstory="Senior traffic engineer, 20 years adaptive signal control",
+    tools=intersection_tools,        # 4 tools
+    llm=fast_llm,
+    function_calling_llm=fast_llm,  # cheaper tool-calling
+    max_iter=12,
+    max_execution_time=30,          # seconds
+    allow_delegation=False,
+)
+
+# Coordinator Agent
+Agent(
+    role="Traffic Network Coordinator",
+    goal="Resolve conflicts, optimize city-wide flow",
+    backstory="Traffic management center, 15 years network optimization",
+    tools=coordinator_tools,        # 3 tools
+    llm=smart_llm,
+    function_calling_llm=fast_llm,
+    max_iter=15,
+    max_execution_time=45,
+    allow_delegation=False,
+)
+```
+
+### 5.4 Task Design & Guardrails
+
+Tasks use structured markdown descriptions with What/How/Context/Constraints. A function-based guardrail validates LLM output:
+
+```python
+def _validate_signal_decision(output: str) -> tuple[bool, Any]:
+    """Check LLM output has valid JSON with required fields."""
+    # Validates: JSON parseable, has action/phase/duration,
+    # phase in {NS_GREEN, EW_GREEN}, duration is numeric
+```
+
+### 5.5 Coordination
+
+Three coordination mechanisms:
+
+1. **ConflictDetector** — detects phase mismatches and excessive green (>45s) between neighbors
+2. **GreenWaveAdvisor** — suggests progressive timing offsets along EW/NS corridors (-2s per position upstream)
+3. **PriorityResolver** — resolves conflicts by: emergency vehicles → queue length → wait time → intersection ID tiebreak
+
+### 5.6 GridSimulation Integration
+
+`GridSimulation` creates a `SignalController` per intersection using `crossroad_plan()`. The `apply_decision()` method supports both:
+- `{"adjustment": ±10}` — timing adjustment via controller
+- `{"phase": "EW_GREEN"}` — direct phase switch
+
+---
+
+## 6. Simulation Engine
 
 ### 5.1 TimingSimulation
 
@@ -320,7 +426,7 @@ class TimingSimulation:
 
 ---
 
-## 6. Safety Constraints
+## 7. Safety Constraints
 
 ### Constraint Clamping
 
@@ -350,7 +456,7 @@ def clamp_effective_duration(base: float, adjustment: int) -> float:
 
 ---
 
-## 7. Observability
+## 8. Observability
 
 ### Decision Logging
 
@@ -384,7 +490,7 @@ class DecisionLog:
 
 ---
 
-## 8. Cost & Performance
+## 9. Cost & Performance
 
 ### Cost Model
 
@@ -417,4 +523,4 @@ class DecisionLog:
 | LLM | OpenAI-compatible API | Flexible, production-grade |
 | Simulation | Custom loop | Lightweight, fast |
 | CLI | Click | Rich CLI experience |
-| Testing | pytest | 248 tests |
+| Testing | pytest | 267 tests |

@@ -4,7 +4,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-248%20passed-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-267%20passed-brightgreen.svg)](tests/)
 
 ---
 
@@ -117,10 +117,13 @@ src/traffic_agent/
 │   ├── signal_controller.py   # 信号控制器 + 基线配时
 │   ├── detector.py            # 检测器模型 + 趋势分析
 │   ├── scenarios.py           # 交通场景定义
-│   └── sim_loop.py            # 仿真主循环
+│   ├── sim_loop.py            # 仿真主循环
+│   └── grid.py                # 3×3 网格仿真 (CrewAI)
 ├── crew/
-│   ├── traffic_crew.py        # 多 Agent 编排
-│   └── coordination.py        # 冲突检测
+│   ├── traffic_crew.py        # CrewAI 多 Agent 编排
+│   └── coordination.py        # 冲突检测 + 绿波协调 + 优先级解决
+├── tools/
+│   └── traffic_tools.py       # CrewAI @tool 工具 (6 个)
 ├── llm/
 │   ├── client.py              # LLM 客户端
 │   ├── parser.py              # 决策解析
@@ -139,7 +142,17 @@ src/traffic_agent/
 ## 测试
 
 ```bash
+# 运行全部测试（267 个）
 python -m pytest tests/ -v
+
+# CrewAI 多 Agent 测试
+python -m pytest tests/test_crew.py -v
+
+# 信号控制器测试
+python -m pytest tests/test_signal_controller.py -v
+
+# 规则引擎测试
+python -m pytest tests/test_timing_rules.py -v
 ```
 
 ---
