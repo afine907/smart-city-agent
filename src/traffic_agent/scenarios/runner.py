@@ -1,143 +1,100 @@
 """
-Scenario Runner — runs multi-phase simulations with different configs.
+Scenario Runner — runs multi-phase simulations using the new timing architecture.
 
-Supports time-varying traffic patterns for realistic scenario testing.
+Bridges the old ScenarioConfig presets with the new TimingSimulation engine.
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
-from traffic_agent.comparison.benchmark import BenchmarkResult
-from traffic_agent.crew.traffic_crew import CrewConfig, TrafficControlCrew
+from traffic_agent.comparison.benchmark import StrategyResult, SimulationReport
 from traffic_agent.llm.client import LLMConfig
-from traffic_agent.optimization.cost_tracker import CostTracker
+from traffic_agent.optimization.layered import TimingDecisionPipeline
 from traffic_agent.scenarios.presets import ScenarioConfig
-from traffic_agent.simulation.engine import SimulationConfig
-from traffic_agent.simulation.grid import GridSimulation
+from traffic_agent.simulation.sim_loop import TimingSimulation
 
 
 class ScenarioRunner:
     """
-    Run a traffic scenario with LLM or fixed timing.
+    Run a traffic scenario with fixed timing or LLM pipeline.
 
     Usage:
+        from traffic_agent.scenarios import create_scenario
+        from traffic_agent.scenarios.runner import ScenarioRunner
+
+        scenario = create_scenario("morning_peak")
         runner = ScenarioRunner(scenario)
-        result = runner.run_with_llm()
-        result = runner.run_with_fixed()
+
+        fixed = runner.run_fixed()
+        llm = runner.run_pipeline()
     """
 
     def __init__(self, scenario: ScenarioConfig):
         self.scenario = scenario
 
-    def run_with_fixed(self) -> BenchmarkResult:
-        """Run scenario with fixed round-robin timing."""
-        start_time = time.time()
-
-        sim = GridSimulation(config=SimulationConfig(seed=self.scenario.seed))
-        intersection_ids = list(sim.intersections.keys())
-        phase_cycle = ["NS_GREEN", "EW_GREEN"]
-        phase_duration = 30
-
-        step_count = 0
-        for config, duration in self.scenario.to_simulation_configs():
-            sim.config.arrival_rate = config.arrival_rate
-            sim.config.emergency_rate = config.emergency_rate
-
-            # Apply direction bias to boundary vehicle generation
-            bias = getattr(config, 'direction_bias', None)
-            if bias is not None:
-                ns_bias = (bias[0] + bias[2]) / 2.0
-                ew_bias = (bias[1] + bias[3]) / 2.0
-                avg_bias = (ns_bias + ew_bias) / 2.0
-                if avg_bias > 0:
-                    sim.config.arrival_rate *= avg_bias
-
-            for _ in range(duration):
-                sim.step()
-
-                # Fixed round-robin
-                for ix_id in intersection_ids:
-                    ix = sim.intersections[ix_id]
-                    cycle_pos = (step_count // phase_duration) % len(phase_cycle)
-                    new_phase = phase_cycle[cycle_pos]
-                    if ix.current_phase != new_phase:
-                        ix.current_phase = new_phase
-                        ix.phase_timer = 0.0
-
-                step_count += 1
-
-        elapsed = time.time() - start_time
-        metrics = sim.get_metrics()
-        metrics["steps"] = step_count
-
-        return BenchmarkResult(
-            name=f"fixed_{self.scenario.name}",
-            steps=step_count,
-            metrics=metrics,
-            duration_seconds=elapsed,
+    def run_fixed(self) -> StrategyResult:
+        """Run scenario with fixed timing (no adjustments)."""
+        start = time.time()
+        sim = TimingSimulation(
+            intersection_type="crossroad",
+            scenario_name=self.scenario.name,
+            pipeline=None,
+            seed=self.scenario.seed,
         )
+        report = sim.run(steps=self.scenario.total_steps)
+        elapsed = time.time() - start
+        return StrategyResult(name=f"fixed_{self.scenario.name}", report=report, duration_seconds=elapsed)
 
-    def run_with_llm(
-        self,
-        llm_config: Optional[LLMConfig] = None,
-        cost_tracker: Optional[CostTracker] = None,
-    ) -> BenchmarkResult:
-        """Run scenario with LLM agent decisions."""
-        start_time = time.time()
+    def run_rule(self) -> StrategyResult:
+        """Run scenario with rule engine only (no LLM)."""
+        from traffic_agent.optimization.rule_engine import TimingRuleEngine
+        from traffic_agent.llm.parser import TimingAdjustment
 
-        sim = GridSimulation(config=SimulationConfig(seed=self.scenario.seed))
-        intersection_ids = list(sim.intersections.keys())
-        graph = sim.get_graph()
+        class RuleOnlyPipeline:
+            def __init__(self):
+                self.rule_engine = TimingRuleEngine()
+                self._stats = {"total_decisions": 0, "layer1_rules": 0}
 
-        crew_config = CrewConfig(
-            llm=llm_config or LLMConfig(),
-            decision_interval=5.0,
-            enable_coordination=True,
-            use_cache=True,
+            def decide(self, detector_data, signal_state, trend=None, **kwargs):
+                self._stats["total_decisions"] += 1
+                result = self.rule_engine.decide(detector_data, signal_state, trend)
+                if result:
+                    self._stats["layer1_rules"] += 1
+                    return result
+                return TimingAdjustment.no_adjustment("规则未命中，不调整")
+
+            def get_stats(self):
+                total = max(1, self._stats["total_decisions"])
+                return {
+                    **self._stats,
+                    "rule_rate": self._stats["layer1_rules"] / total,
+                    "layer2_cache": 0,
+                    "layer3_llm": 0,
+                    "free_rate": 1.0,
+                }
+
+        start = time.time()
+        pipeline = RuleOnlyPipeline()
+        sim = TimingSimulation(
+            intersection_type="crossroad",
+            scenario_name=self.scenario.name,
+            pipeline=pipeline,
+            seed=self.scenario.seed,
         )
+        report = sim.run(steps=self.scenario.total_steps)
+        elapsed = time.time() - start
+        return StrategyResult(name=f"rule_{self.scenario.name}", report=report, duration_seconds=elapsed)
 
-        crew = TrafficControlCrew(intersection_ids, graph, crew_config)
-
-        step_count = 0
-        for config, duration in self.scenario.to_simulation_configs():
-            sim.config.arrival_rate = config.arrival_rate
-            sim.config.emergency_rate = config.emergency_rate
-
-            # Apply direction bias (from ScenarioConfig, not SimulationConfig)
-            bias = getattr(config, 'direction_bias', None)
-            if bias is not None:
-                ns_bias = (bias[0] + bias[2]) / 2.0
-                ew_bias = (bias[1] + bias[3]) / 2.0
-                avg_bias = (ns_bias + ew_bias) / 2.0
-                if avg_bias > 0:
-                    sim.config.arrival_rate *= avg_bias
-
-            for _ in range(duration):
-                sim.step()
-
-                # LLM decides every 5 steps
-                if step_count % 5 == 0:
-                    decisions = crew.step(sim)
-
-                    # Track costs
-                    if cost_tracker and decisions:
-                        for d in decisions:
-                            cost_tracker.record(
-                                intersection_id=d.get("intersection_id", "unknown"),
-                                model=crew.config.llm.fast_model,
-                            )
-
-                step_count += 1
-
-        elapsed = time.time() - start_time
-        metrics = sim.get_metrics()
-        metrics["steps"] = step_count
-        metrics["llm_calls"] = crew._total_llm_calls
-        metrics["cache_hits"] = crew._total_cache_hits
-
-        return BenchmarkResult(
-            name=f"llm_{self.scenario.name}",
-            steps=step_count,
-            metrics=metrics,
-            duration_seconds=elapsed,
+    def run_pipeline(self, llm_config: Optional[LLMConfig] = None) -> StrategyResult:
+        """Run scenario with full pipeline (rules → cache → LLM)."""
+        start = time.time()
+        pipeline = TimingDecisionPipeline(llm_config=llm_config)
+        sim = TimingSimulation(
+            intersection_type="crossroad",
+            scenario_name=self.scenario.name,
+            pipeline=pipeline,
+            seed=self.scenario.seed,
         )
+        report = sim.run(steps=self.scenario.total_steps)
+        elapsed = time.time() - start
+        return StrategyResult(name=f"pipeline_{self.scenario.name}", report=report, duration_seconds=elapsed)

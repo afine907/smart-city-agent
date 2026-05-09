@@ -1,162 +1,138 @@
 """
-Layered Decision Maker — simple → fast → complex decision pipeline.
+Timing Decision Pipeline — 3-layer decision pipeline for ±10s adjustment.
 
 Routes decisions through different layers based on complexity:
 - Layer 1 (Rules):  Zero cost, instant. For simple/obvious cases.
-- Layer 2 (Fast):   Low cost, fast. For moderate complexity.
-- Layer 3 (Smart):  Higher cost, thorough. For complex coordination.
+- Layer 2 (Cache):  Zero cost, instant. For similar traffic patterns.
+- Layer 3 (LLM):    Paid, slow. For complex scenarios requiring reasoning.
 
 Usage:
-    maker = LayeredDecisionMaker(llm_config)
-    decision = maker.decide(state, neighbors)
+    pipeline = TimingDecisionPipeline(llm_config)
+    adjustment = pipeline.decide(detector_data, signal_state, trend)
 """
 
 from typing import Any, Dict, List, Optional
 
 from traffic_agent.llm.client import LLMClient, LLMConfig
-from traffic_agent.llm.parser import ResponseParser, TrafficDecision
+from traffic_agent.llm.parser import TimingAdjustment, TimingAdjustmentParser
+from traffic_agent.llm.prompts import (
+    TIMING_ADJUSTMENT_SYSTEM,
+    format_timing_message,
+)
 from traffic_agent.optimization.cache import DecisionCache
 from traffic_agent.optimization.cost_tracker import CostTracker
-from traffic_agent.optimization.rule_engine import RuleEngine
-from traffic_agent.tools.traffic_tools import (
-    COORDINATOR_PROMPT,
-    TRAFFIC_EXPERT_PROMPT,
-    IntersectionState,
-)
+from traffic_agent.optimization.rule_engine import TimingRuleEngine
 
 
-class LayeredDecisionMaker:
+class TimingDecisionPipeline:
     """
-    Three-layer decision pipeline.
+    Three-layer decision pipeline for timing adjustments.
 
     Layer flow:
-        state → RuleEngine → (hit? return) → Cache → (hit? return) → LLM
+        data → RuleEngine → (hit? return) → Cache → (hit? return) → LLM
 
-    LLM selection:
-        - Simple (queue < threshold): Fast model
-        - Complex (conflicts, emergencies): Smart model
+    The pipeline decides whether to adjust the current green phase
+    duration by ±10 seconds based on traffic conditions.
     """
 
     def __init__(
         self,
         llm_config: Optional[LLMConfig] = None,
         cost_tracker: Optional[CostTracker] = None,
-        simple_threshold: int = 8,
-        complex_threshold: int = 15,
     ):
         self.llm_config = llm_config or LLMConfig()
         self.llm_client = LLMClient(self.llm_config)
-        self.rule_engine = RuleEngine()
+        self.rule_engine = TimingRuleEngine()
         self.cache = DecisionCache(max_size=2000, ttl_seconds=30.0)
         self.cost_tracker = cost_tracker
-        self.simple_threshold = simple_threshold
-        self.complex_threshold = complex_threshold
 
         # Stats
         self._layer1_hits = 0
         self._layer2_hits = 0
         self._layer3_calls = 0
         self._total_decisions = 0
+        self._adjustment_history: List[Dict] = []
 
     def decide(
         self,
-        state: IntersectionState,
-        neighbors: Optional[Dict[str, IntersectionState]] = None,
-    ) -> TrafficDecision:
+        detector_data: Dict,
+        signal_state: Dict,
+        trend: Optional[Dict[str, List[int]]] = None,
+        intersection_id: str = "unknown",
+        intersection_type: str = "crossroad",
+    ) -> TimingAdjustment:
         """
-        Make a decision through the layered pipeline.
+        Make a timing adjustment through the layered pipeline.
 
-        1. Try rule engine (free, instant)
-        2. Try cache (free, instant)
-        3. Call LLM (costs money, slow)
+        Args:
+            detector_data: dict with readings per direction
+            signal_state: dict with current_phase, phase_remaining, etc.
+            trend: optional trend data
+            intersection_id: ID of the intersection
+            intersection_type: "crossroad" or "tjunction"
+
+        Returns:
+            TimingAdjustment with adjustment value and reasoning
         """
         self._total_decisions += 1
 
         # Layer 1: Rules
-        rule_decision = self.rule_engine.decide(state, neighbors)
-        if rule_decision is not None:
+        rule_result = self.rule_engine.decide(detector_data, signal_state, trend)
+        if rule_result is not None:
             self._layer1_hits += 1
-            return rule_decision
+            self._record_adjustment(rule_result, intersection_id)
+            return rule_result
 
         # Layer 2: Cache
-        cached = self.cache.get(state)
-        if cached is not None:
+        cache_key = self._make_cache_key(detector_data, signal_state)
+        cached = self.cache.get(cache_key)
+        if cached is not None and isinstance(cached, TimingAdjustment):
             self._layer2_hits += 1
+            cached.source = "cache"
+            self._record_adjustment(cached, intersection_id)
             return cached
 
-        # Layer 3: LLM (select model based on complexity)
-        complexity = self._assess_complexity(state, neighbors)
-        if complexity == "simple":
-            model = self.llm_config.fast_model
-        else:
-            model = self.llm_config.smart_model
-
-        decision = self._call_llm(state, neighbors, model)
+        # Layer 3: LLM
+        llm_result = self._call_llm(
+            detector_data, signal_state, trend,
+            intersection_id, intersection_type,
+        )
         self._layer3_calls += 1
 
         # Cache the result
-        self.cache.set(state, decision)
+        self.cache.set(cache_key, llm_result)
+        self._record_adjustment(llm_result, intersection_id)
 
-        return decision
-
-    def _assess_complexity(
-        self,
-        state: IntersectionState,
-        neighbors: Optional[Dict[str, IntersectionState]] = None,
-    ) -> str:
-        """Assess decision complexity: simple, moderate, complex."""
-        total_queue = state.get_total_queue()
-        max_queue = state.get_max_queue()
-
-        # Emergency → complex
-        if state.emergency:
-            return "complex"
-
-        # Very high queue → complex
-        if max_queue >= self.complex_threshold:
-            return "complex"
-
-        # Neighbor conflicts → complex
-        if neighbors:
-            for nid, ns in neighbors.items():
-                # Both have high demand but different preferred phases
-                if (state.queue_north + state.queue_south > 10 and
-                    ns.queue_east + ns.queue_west > 10):
-                    return "complex"
-
-        # Moderate queue → moderate
-        if max_queue >= self.simple_threshold:
-            return "moderate"
-
-        return "simple"
+        return llm_result
 
     def _call_llm(
         self,
-        state: IntersectionState,
-        neighbors: Optional[Dict[str, IntersectionState]],
-        model: str,
-    ) -> TrafficDecision:
-        """Call LLM for decision."""
-        # Build neighbor text
-        neighbor_text = ""
-        if neighbors:
-            neighbor_text = "\n".join(
-                f"  {nid}: 排队{ns.get_total_queue()}辆, {ns.current_phase}"
-                for nid, ns in neighbors.items()
-            )
+        detector_data: Dict,
+        signal_state: Dict,
+        trend: Optional[Dict[str, List[int]]],
+        intersection_id: str,
+        intersection_type: str,
+    ) -> TimingAdjustment:
+        """Call LLM for timing adjustment."""
+        # Format the user message
+        user_message = format_timing_message(
+            intersection_id=intersection_id,
+            intersection_type=intersection_type,
+            current_phase=signal_state.get("current_phase", "NS_GREEN"),
+            base_duration=signal_state.get("base_duration", 60.0),
+            phase_elapsed=signal_state.get("phase_elapsed", 0.0),
+            phase_remaining=signal_state.get("phase_remaining", 30.0),
+            detector_data=detector_data,
+            ns_trend=trend.get("ns_total", []) if trend else [],
+            ew_trend=trend.get("ew_total", []) if trend else [],
+            recent_adjustments=self._adjustment_history[-3:],
+        )
 
-        user_message = f"""当前路况：
-{state.to_text()}
-
-邻居路口：
-{neighbor_text}
-
-请做出信号灯决策（JSON格式）。"""
+        # Use fast model for LLM calls (cost-efficient)
+        model = self.llm_config.fast_model
 
         response = self.llm_client.chat(
-            system_prompt=TRAFFIC_EXPERT_PROMPT.format(
-                intersection_id=state.intersection_id
-            ),
+            system_prompt=TIMING_ADJUSTMENT_SYSTEM,
             user_message=user_message,
             model=model,
             temperature=0.3,
@@ -165,20 +141,48 @@ class LayeredDecisionMaker:
         # Track cost
         if self.cost_tracker:
             self.cost_tracker.record(
-                intersection_id=state.intersection_id,
+                intersection_id=intersection_id,
                 model=model,
                 prompt_tokens=response.tokens_input,
                 completion_tokens=response.tokens_output,
             )
 
-        decision = ResponseParser.parse(response.content)
-        if decision is None:
-            decision = ResponseParser.fallback("LLM响应解析失败")
+        # Parse response
+        result = TimingAdjustmentParser.parse(response.content)
+        if result is None:
+            result = TimingAdjustmentParser.fallback("LLM响应解析失败")
 
-        return decision
+        return result
+
+    def _make_cache_key(self, detector_data: Dict, signal_state: Dict) -> str:
+        """Create a coarse-grained cache key from detector data."""
+        readings = detector_data.get("readings", {})
+
+        def bin_value(v: int) -> int:
+            return v // 3  # bin to groups of 3
+
+        north = bin_value(readings.get("north", {}).get("vehicles", 0))
+        south = bin_value(readings.get("south", {}).get("vehicles", 0))
+        east = bin_value(readings.get("east", {}).get("vehicles", 0))
+        west = bin_value(readings.get("west", {}).get("vehicles", 0))
+        phase = signal_state.get("current_phase", "NS_GREEN")
+
+        return f"{north}_{south}_{east}_{west}_{phase}"
+
+    def _record_adjustment(self, adjustment: TimingAdjustment, intersection_id: str) -> None:
+        """Record adjustment for history."""
+        self._adjustment_history.append({
+            "intersection_id": intersection_id,
+            "adjustment": adjustment.adjustment,
+            "reason": adjustment.reasoning,
+            "source": adjustment.source,
+        })
+        # Keep only last 10
+        if len(self._adjustment_history) > 10:
+            self._adjustment_history = self._adjustment_history[-10:]
 
     def get_stats(self) -> Dict[str, Any]:
-        """Return layered decision statistics."""
+        """Return pipeline statistics."""
         total = max(1, self._total_decisions)
         return {
             "total_decisions": self._total_decisions,
@@ -192,3 +196,17 @@ class LayeredDecisionMaker:
             "rule_engine": self.rule_engine.get_stats(),
             "cache_size": self.cache.size,
         }
+
+    def reset(self) -> None:
+        """Reset pipeline state."""
+        self._layer1_hits = 0
+        self._layer2_hits = 0
+        self._layer3_calls = 0
+        self._total_decisions = 0
+        self._adjustment_history = []
+        self.rule_engine.reset_stats()
+        self.cache.clear()
+
+
+# Backward compatibility alias
+LayeredDecisionMaker = TimingDecisionPipeline

@@ -1,267 +1,282 @@
 """
-Comparison Benchmark — AI vs Fixed Timing comparison framework.
+Timing Benchmark — Compare fixed timing vs rule vs LLM adjustment.
 
-Runs identical simulations with LLM agents and fixed timing,
+Runs identical simulations with different decision strategies,
 then produces quantitative comparison reports.
 """
 
 import json
-import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import numpy as np
-
-from traffic_agent.crew.traffic_crew import CrewConfig, TrafficControlCrew
 from traffic_agent.llm.client import LLMConfig
-from traffic_agent.simulation.engine import SimulationConfig
-from traffic_agent.simulation.grid import GridSimulation
+from traffic_agent.optimization.layered import TimingDecisionPipeline
+from traffic_agent.simulation.sim_loop import SimulationReport, TimingSimulation
 
 
 @dataclass
-class BenchmarkResult:
-    """Result from a single simulation run."""
+class StrategyResult:
+    """Result from a single strategy run."""
     name: str
-    steps: int
-    metrics: Dict[str, float]
+    report: SimulationReport
     duration_seconds: float
-    
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "name": self.name,
-            "steps": self.steps,
-            "metrics": self.metrics,
-            "duration_seconds": self.duration_seconds,
+            "total_steps": self.report.total_steps,
+            "total_vehicles_generated": self.report.total_vehicles_generated,
+            "total_vehicles_completed": self.report.total_vehicles_completed,
+            "avg_wait_time": round(self.report.avg_wait_time, 2),
+            "throughput": round(self.report.throughput, 4),
+            "adjustments_made": self.report.adjustments_made,
+            "llm_adjustments": self.report.llm_adjustments,
+            "rule_adjustments": self.report.rule_adjustments,
+            "duration_seconds": round(self.duration_seconds, 2),
+            "pipeline_stats": self.report.pipeline_stats,
         }
 
 
 @dataclass
-class ComparisonReport:
-    """Full comparison between LLM and Fixed timing."""
-    llm_result: BenchmarkResult
-    fixed_result: BenchmarkResult
-    improvements: Dict[str, float] = field(default_factory=dict)
-    
+class BenchmarkReport:
+    """Full benchmark report comparing multiple strategies."""
+    results: Dict[str, StrategyResult]
+    intersection_type: str
+    scenario_name: str
+    steps: int
+
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "llm": self.llm_result.to_dict(),
-            "fixed": self.fixed_result.to_dict(),
-            "improvements": self.improvements,
+            "intersection_type": self.intersection_type,
+            "scenario": self.scenario_name,
+            "steps": self.steps,
+            "strategies": {name: r.to_dict() for name, r in self.results.items()},
+            "improvements": self._calc_improvements(),
         }
-    
+
     def format_table(self) -> str:
         """Format as a readable comparison table."""
         lines = []
-        lines.append("=" * 60)
-        lines.append("  📊 AI vs Fixed Timing Comparison")
-        lines.append("=" * 60)
+        lines.append("=" * 70)
+        lines.append(f"  Timing Adjustment Benchmark")
+        lines.append(f"  Intersection: {self.intersection_type} | Scenario: {self.scenario_name}")
+        lines.append("=" * 70)
         lines.append("")
-        lines.append(f"  Steps: {self.llm_result.steps}")
-        lines.append("")
-        
+
         # Header
-        lines.append(f"  {'Metric':<25} {'Fixed':>10} {'LLM':>10} {'Δ':>10}")
-        lines.append("  " + "-" * 55)
-        
+        names = list(self.results.keys())
+        header = f"  {'Metric':<25}"
+        for name in names:
+            header += f" {name:>12}"
+        lines.append(header)
+        lines.append("  " + "-" * (25 + 13 * len(names)))
+
         # Metrics
-        fixed_m = self.fixed_result.metrics
-        llm_m = self.llm_result.metrics
-        
-        rows = [
+        metrics = [
             ("avg_wait_time", "Avg Wait (s)", True),
-            ("max_wait_time", "Max Wait (s)", True),
-            ("throughput", "Throughput", False),
-            ("total_vehicles", "Total Queue", True),
-            ("total_served", "Vehicles Served", False),
+            ("throughput", "Throughput (/s)", False),
+            ("total_vehicles_generated", "Generated", False),
+            ("total_vehicles_completed", "Completed", False),
+            ("adjustments_made", "Adjustments", None),
+            ("llm_adjustments", "LLM Calls", None),
+            ("duration_seconds", "Runtime (s)", None),
         ]
-        
-        for key, label, lower_better in rows:
-            f_val = fixed_m.get(key, 0)
-            l_val = llm_m.get(key, 0)
-            imp = self.improvements.get(key, 0)
-            
-            arrow = "✅" if (imp > 0 and lower_better) or (imp < 0 and not lower_better) else "⚠️"
-            sign = "+" if imp > 0 else ""
-            
-            if "time" in key or "wait" in key:
-                lines.append(f"  {label:<25} {f_val:>10.1f} {l_val:>10.1f} {sign}{imp:>8.1f}% {arrow}")
-            elif "throughput" in key:
-                lines.append(f"  {label:<25} {f_val:>10.2f} {l_val:>10.2f} {sign}{imp:>8.1f}% {arrow}")
-            else:
-                lines.append(f"  {label:<25} {f_val:>10.0f} {l_val:>10.0f} {sign}{imp:>8.1f}% {arrow}")
-        
+
+        for key, label, lower_better in metrics:
+            row = f"  {label:<25}"
+            for name in names:
+                val = getattr(self.results[name].report, key, 0)
+                if key == "duration_seconds":
+                    val = self.results[name].duration_seconds
+                if isinstance(val, float):
+                    row += f" {val:>12.2f}"
+                else:
+                    row += f" {val:>12}"
+            lines.append(row)
+
+        # Improvements
+        improvements = self._calc_improvements()
+        if improvements:
+            lines.append("")
+            lines.append("  Improvements (vs fixed):")
+            for key, val in improvements.items():
+                arrow = "+" if val > 0 else ""
+                lines.append(f"    {key}: {arrow}{val:.1f}%")
+
         lines.append("")
-        
-        # Timing
-        lines.append(f"  ⏱️  Fixed: {self.fixed_result.duration_seconds:.1f}s | LLM: {self.llm_result.duration_seconds:.1f}s")
-        lines.append("=" * 60)
-        
+        lines.append("=" * 70)
         return "\n".join(lines)
 
+    def _calc_improvements(self) -> Dict[str, float]:
+        """Calculate improvements for each strategy vs the first (baseline)."""
+        names = list(self.results.keys())
+        if len(names) < 2:
+            return {}
 
-class ComparisonBenchmark:
+        baseline = self.results[names[0]]
+        improvements = {}
+
+        for name in names[1:]:
+            result = self.results[name]
+            # Lower is better for wait time
+            if baseline.report.avg_wait_time > 0:
+                imp = (baseline.report.avg_wait_time - result.report.avg_wait_time) / baseline.report.avg_wait_time * 100
+                improvements[f"{name}_avg_wait"] = imp
+            # Higher is better for throughput
+            if baseline.report.throughput > 0:
+                imp = (result.report.throughput - baseline.report.throughput) / baseline.report.throughput * 100
+                improvements[f"{name}_throughput"] = imp
+
+        return improvements
+
+
+class TimingBenchmark:
     """
-    Benchmark framework comparing LLM vs Fixed timing.
-    
+    Benchmark framework comparing timing adjustment strategies.
+
+    Strategies:
+    1. Fixed timing (baseline): no adjustment
+    2. Rule-based: rule engine only
+    3. Full pipeline: rules → cache → LLM
+
     Usage:
-        bench = ComparisonBenchmark(steps=200)
+        bench = TimingBenchmark(steps=500, scenario="morning_peak")
         report = bench.run()
         print(report.format_table())
-        bench.save(report, "results.json")
     """
-    
+
     def __init__(
         self,
-        steps: int = 200,
+        steps: int = 500,
+        scenario: str = "morning_peak",
+        intersection_type: str = "crossroad",
         seed: int = 42,
         llm_config: Optional[LLMConfig] = None,
     ):
         self.steps = steps
+        self.scenario = scenario
+        self.intersection_type = intersection_type
         self.seed = seed
-        self.llm_config = llm_config or LLMConfig(
-            fast_model="LongCat-Flash-Chat",
-            api_key=os.getenv("LONGCAT_API_KEY", ""),
-            api_base=os.getenv("LONGCAT_API_BASE", "https://api.longcat.chat/openai"),
-        )
-    
-    def run(self) -> ComparisonReport:
-        """Run both simulations and produce comparison report."""
-        print(f"🏁 Running benchmark: {self.steps} steps each")
-        print()
-        
-        # Run fixed timing
-        print("🔴 Running fixed timing...")
-        fixed_result = self._run_fixed()
-        print(f"   Done in {fixed_result.duration_seconds:.1f}s")
-        
-        # Run LLM
-        print("🧠 Running LLM agents...")
-        llm_result = self._run_llm()
-        print(f"   Done in {llm_result.duration_seconds:.1f}s")
-        
-        # Calculate improvements
-        improvements = self._calc_improvements(fixed_result, llm_result)
-        
-        report = ComparisonReport(
-            llm_result=llm_result,
-            fixed_result=fixed_result,
-            improvements=improvements,
-        )
-        
-        return report
-    
-    def _run_fixed(self) -> BenchmarkResult:
-        """Run simulation with fixed round-robin timing."""
-        sim_config = SimulationConfig(seed=self.seed, arrival_rate=0.5)
-        sim = GridSimulation(config=sim_config)
-        
-        intersection_ids = [f"ix_{r}_{c}" for r in range(3) for c in range(3)]
-        phase_cycle = ["NS_GREEN", "EW_GREEN"]
-        phase_duration = 30  # steps per phase
-        
-        start_time = time.time()
-        
-        for step in range(self.steps):
-            sim.step()
-            
-            # Fixed round-robin: switch phase every phase_duration steps
-            for ix_id in intersection_ids:
-                ix = sim.intersections[ix_id]
-                cycle_pos = (step // phase_duration) % len(phase_cycle)
-                new_phase = phase_cycle[cycle_pos]
-                if ix.current_phase != new_phase:
-                    ix.current_phase = new_phase
-                    ix.phase_timer = 0.0
-        
-        elapsed = time.time() - start_time
-        metrics = sim.get_metrics()
-        
-        return BenchmarkResult(
-            name="fixed",
+        self.llm_config = llm_config
+
+    def run(self, strategies: Optional[List[str]] = None) -> BenchmarkReport:
+        """
+        Run benchmark with specified strategies.
+
+        Args:
+            strategies: list of strategy names to run.
+                       Default: ["fixed", "rule", "pipeline"]
+        """
+        if strategies is None:
+            strategies = ["fixed", "rule", "pipeline"]
+
+        results = {}
+
+        for strategy in strategies:
+            print(f"\n  Running strategy: {strategy}...")
+            start = time.time()
+
+            if strategy == "fixed":
+                report = self._run_fixed()
+            elif strategy == "rule":
+                report = self._run_rule()
+            elif strategy == "pipeline":
+                report = self._run_pipeline()
+            else:
+                raise ValueError(f"Unknown strategy: {strategy}")
+
+            elapsed = time.time() - start
+            results[strategy] = StrategyResult(
+                name=strategy,
+                report=report,
+                duration_seconds=elapsed,
+            )
+            print(f"    Done in {elapsed:.1f}s | "
+                  f"Avg wait: {report.avg_wait_time:.1f}s | "
+                  f"Throughput: {report.throughput:.3f}/s")
+
+        return BenchmarkReport(
+            results=results,
+            intersection_type=self.intersection_type,
+            scenario_name=self.scenario,
             steps=self.steps,
-            metrics=metrics,
-            duration_seconds=elapsed,
         )
-    
-    def _run_llm(self) -> BenchmarkResult:
-        """Run simulation with LLM agent decisions."""
-        sim_config = SimulationConfig(seed=self.seed, arrival_rate=0.5)
-        sim = GridSimulation(config=sim_config)
-        
-        intersection_ids = [f"ix_{r}_{c}" for r in range(3) for c in range(3)]
-        graph = sim.get_graph()
-        
-        crew_config = CrewConfig(
-            llm=self.llm_config,
-            decision_interval=5.0,
-            enable_coordination=True,
-            use_cache=True,
-            verbose=False,
+
+    def _run_fixed(self) -> SimulationReport:
+        """Run with fixed timing (no adjustments)."""
+        sim = TimingSimulation(
+            intersection_type=self.intersection_type,
+            scenario_name=self.scenario,
+            pipeline=None,
+            seed=self.seed,
         )
-        
-        crew = TrafficControlCrew(intersection_ids, graph, crew_config)
-        
-        start_time = time.time()
-        
-        for step in range(self.steps):
-            sim.step()
-            
-            # LLM decides every 5 steps
-            if step % 5 == 0:
-                crew.step(sim)
-        
-        elapsed = time.time() - start_time
-        metrics = sim.get_metrics()
-        
-        return BenchmarkResult(
-            name="llm",
-            steps=self.steps,
-            metrics=metrics,
-            duration_seconds=elapsed,
+        return sim.run(steps=self.steps)
+
+    def _run_rule(self) -> SimulationReport:
+        """Run with rule engine only (no LLM)."""
+        # Create a pipeline but only use rules (no cache, no LLM)
+        from traffic_agent.optimization.rule_engine import TimingRuleEngine
+        from traffic_agent.llm.parser import TimingAdjustment
+
+        class RuleOnlyPipeline:
+            """Pipeline that only uses rules, never calls LLM."""
+            def __init__(self):
+                self.rule_engine = TimingRuleEngine()
+                self._stats = {"total_decisions": 0, "layer1_rules": 0}
+
+            def decide(self, detector_data, signal_state, trend=None, **kwargs):
+                self._stats["total_decisions"] += 1
+                result = self.rule_engine.decide(detector_data, signal_state, trend)
+                if result:
+                    self._stats["layer1_rules"] += 1
+                    return result
+                return TimingAdjustment.no_adjustment("规则未命中，不调整")
+
+            def get_stats(self):
+                total = max(1, self._stats["total_decisions"])
+                return {
+                    **self._stats,
+                    "rule_rate": self._stats["layer1_rules"] / total,
+                    "layer2_cache": 0,
+                    "layer3_llm": 0,
+                    "free_rate": 1.0,
+                }
+
+        pipeline = RuleOnlyPipeline()
+        sim = TimingSimulation(
+            intersection_type=self.intersection_type,
+            scenario_name=self.scenario,
+            pipeline=pipeline,
+            seed=self.seed,
         )
-    
-    def _calc_improvements(
-        self,
-        fixed: BenchmarkResult,
-        llm: BenchmarkResult,
-    ) -> Dict[str, float]:
-        """Calculate % improvement for each metric (positive = better)."""
-        improvements = {}
-        
-        fixed_m = fixed.metrics
-        llm_m = llm.metrics
-        
-        # Lower is better
-        for key in ["avg_wait_time", "max_wait_time", "total_vehicles"]:
-            f_val = fixed_m.get(key, 0)
-            l_val = llm_m.get(key, 0)
-            if f_val > 0:
-                improvements[key] = (f_val - l_val) / f_val * 100
-        
-        # Higher is better
-        for key in ["throughput", "total_served"]:
-            f_val = fixed_m.get(key, 0)
-            l_val = llm_m.get(key, 0)
-            if f_val > 0:
-                improvements[key] = (l_val - f_val) / f_val * 100
-        
-        return improvements
-    
-    def save(self, report: ComparisonReport, path: str) -> None:
-        """Save comparison report to JSON."""
-        output = {
-            "comparison": report.to_dict(),
-            "config": {
-                "steps": self.steps,
-                "seed": self.seed,
-                "llm_model": self.llm_config.fast_model,
-            },
-        }
-        
+        return sim.run(steps=self.steps)
+
+    def _run_pipeline(self) -> SimulationReport:
+        """Run with full pipeline (rules → cache → LLM)."""
+        pipeline = TimingDecisionPipeline(
+            llm_config=self.llm_config,
+        )
+        sim = TimingSimulation(
+            intersection_type=self.intersection_type,
+            scenario_name=self.scenario,
+            pipeline=pipeline,
+            seed=self.seed,
+        )
+        return sim.run(steps=self.steps)
+
+    def save(self, report: BenchmarkReport, path: str) -> None:
+        """Save benchmark report to JSON."""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
-        
-        print(f"💾 Report saved to {path}")
+        Path(path).write_text(
+            json.dumps(report.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"  Report saved to {path}")
+
+
+# Backward compatibility aliases
+BenchmarkResult = StrategyResult
+ComparisonBenchmark = TimingBenchmark
+ComparisonReport = BenchmarkReport
