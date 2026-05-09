@@ -124,7 +124,12 @@ def cmd_run_multi_agent(args) -> None:
         fast_model=args.model,
         api_key=args.api_key,
     )
-    crew_config = CrewConfig(llm=llm_config)
+    crew_config = CrewConfig(
+        llm=llm_config,
+        use_rules=getattr(args, 'rule', True),
+        use_cache=True,
+        enable_timing_adjustment=True,
+    )
 
     # Create multi-agent crew
     intersection_ids = list(sim.intersections.keys())
@@ -136,25 +141,31 @@ def cmd_run_multi_agent(args) -> None:
         config=crew_config,
     )
 
+    # Connect simulation engine to CrewAI tools
+    crew.set_engine(sim)
+
     print(f"  Intersections: {len(intersection_ids)}")
     print(f"  Agents: {len(intersection_ids)} intersection + 1 coordinator")
+    print(f"  Pipeline: rules={'ON' if crew_config.use_rules else 'OFF'}"
+          f" | cache={'ON' if crew_config.use_cache else 'OFF'}"
+          f" | LLM=CrewAI")
     print()
 
     # Run simulation
-    total_decisions = 0
-    total_llm_calls = 0
-
     for step in range(args.steps):
         # Advance simulation
         sim.step()
 
         # Get decisions from multi-agent crew
         decisions = crew.step(sim)
-        total_decisions += len(decisions)
-        total_llm_calls += crew._total_llm_calls
 
         if args.verbose and step % 50 == 0:
-            print(f"  Step {step}: {len(decisions)} decisions made")
+            layers = {}
+            for d in decisions:
+                layer = d.get("layer", "unknown")
+                layers[layer] = layers.get(layer, 0) + 1
+            layer_str = ", ".join(f"{k}={v}" for k, v in layers.items())
+            print(f"  Step {step}: {len(decisions)} decisions ({layer_str})")
 
     # Print report
     metrics = crew.get_metrics()
@@ -165,15 +176,24 @@ def cmd_run_multi_agent(args) -> None:
     print(f"  Total steps: {args.steps}")
     print(f"  Intersections: {len(intersection_ids)}")
     print(f"  Total decisions: {metrics['total_decisions']}")
+    print(f"  Rule hits: {metrics['total_rule_hits']} ({metrics['rule_hit_rate']:.2%})")
+    print(f"  Cache hits: {metrics['total_cache_hits']} ({metrics['cache_hit_rate']:.2%})")
     print(f"  LLM calls: {metrics['total_llm_calls']}")
-    print(f"  Cache hits: {metrics['total_cache_hits']}")
-    print(f"  Cache hit rate: {metrics['cache_hit_rate']:.2%}")
+    print()
+
+    # Simulation metrics
+    sim_metrics = sim.get_metrics()
+    print(f"  Vehicles generated: {sim_metrics['vehicles_generated']}")
+    print(f"  Vehicles completed: {sim_metrics['vehicles_completed']}")
+    print(f"  Avg wait time: {sim_metrics['avg_wait_time']:.1f}s")
+    print(f"  Throughput: {sim_metrics['throughput']:.2f} veh/s")
     print()
 
     if args.export:
         import json
+        export_data = {**metrics, **sim_metrics}
         with open(args.export, 'w', encoding='utf-8') as f:
-            json.dump(metrics, f, ensure_ascii=False, indent=2)
+            json.dump(export_data, f, ensure_ascii=False, indent=2)
         print(f"  Metrics exported to {args.export}")
 
     print("=" * 60)

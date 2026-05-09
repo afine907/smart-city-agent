@@ -208,6 +208,26 @@ class TimingRuleEngine:
             "rule_coverage": self._decisions_made / max(1, total),
         }
 
+    def decide_from_state(self, state) -> Optional[TimingAdjustment]:
+        """
+        Convenience method: make a rule-based decision from an IntersectionState.
+
+        Converts IntersectionState to the dict format expected by decide().
+        """
+        detector_data = {
+            "readings": {
+                "north": {"vehicles": state.queue_north, "pedestrians": 0, "bicycles": 0},
+                "south": {"vehicles": state.queue_south, "pedestrians": 0, "bicycles": 0},
+                "east": {"vehicles": state.queue_east, "pedestrians": 0, "bicycles": 0},
+                "west": {"vehicles": state.queue_west, "pedestrians": 0, "bicycles": 0},
+            }
+        }
+        signal_state = {
+            "current_phase": state.current_phase,
+            "phase_remaining": max(0, state.base_duration - state.phase_duration) if state.base_duration > 0 else 30.0,
+        }
+        return self.decide(detector_data, signal_state)
+
     def reset_stats(self) -> None:
         """Reset statistics."""
         self._decisions_made = 0
