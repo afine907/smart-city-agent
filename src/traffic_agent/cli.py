@@ -14,6 +14,9 @@ import sys
 
 def cmd_run(args) -> None:
     """Run a timing adjustment simulation."""
+    if args.multi_agent:
+        return cmd_run_multi_agent(args)
+
     from traffic_agent.simulation.sim_loop import TimingSimulation
 
     # Optionally create pipeline for LLM/rule decisions
@@ -102,6 +105,100 @@ def cmd_run(args) -> None:
     print("=" * 60)
 
 
+def cmd_run_multi_agent(args) -> None:
+    """Run multi-agent simulation with CrewAI."""
+    from traffic_agent.simulation.grid import GridSimulation
+    from traffic_agent.crew.traffic_crew import TrafficControlCrew, CrewConfig
+    from traffic_agent.llm.client import LLMConfig
+
+    print("  Multi-Agent mode (CrewAI)")
+    print(f"  Scenario: {args.scenario}")
+    print(f"  Steps: {args.steps}")
+    print()
+
+    # Create grid simulation (3x3 intersections)
+    sim = GridSimulation()
+
+    # Create crew config
+    llm_config = LLMConfig(
+        fast_model=args.model,
+        api_key=args.api_key,
+    )
+    crew_config = CrewConfig(
+        llm=llm_config,
+        use_rules=getattr(args, 'rule', True),
+        use_cache=True,
+        enable_timing_adjustment=True,
+    )
+
+    # Create multi-agent crew
+    intersection_ids = list(sim.intersections.keys())
+    graph = sim.get_graph()
+
+    crew = TrafficControlCrew(
+        intersection_ids=intersection_ids,
+        graph=graph,
+        config=crew_config,
+    )
+
+    # Connect simulation engine to CrewAI tools
+    crew.set_engine(sim)
+
+    print(f"  Intersections: {len(intersection_ids)}")
+    print(f"  Agents: {len(intersection_ids)} intersection + 1 coordinator")
+    print(f"  Pipeline: rules={'ON' if crew_config.use_rules else 'OFF'}"
+          f" | cache={'ON' if crew_config.use_cache else 'OFF'}"
+          f" | LLM=CrewAI")
+    print()
+
+    # Run simulation
+    for step in range(args.steps):
+        # Advance simulation
+        sim.step()
+
+        # Get decisions from multi-agent crew
+        decisions = crew.step(sim)
+
+        if args.verbose and step % 50 == 0:
+            layers = {}
+            for d in decisions:
+                layer = d.get("layer", "unknown")
+                layers[layer] = layers.get(layer, 0) + 1
+            layer_str = ", ".join(f"{k}={v}" for k, v in layers.items())
+            print(f"  Step {step}: {len(decisions)} decisions ({layer_str})")
+
+    # Print report
+    metrics = crew.get_metrics()
+    print()
+    print("=" * 60)
+    print("  Multi-Agent Simulation Report")
+    print("=" * 60)
+    print(f"  Total steps: {args.steps}")
+    print(f"  Intersections: {len(intersection_ids)}")
+    print(f"  Total decisions: {metrics['total_decisions']}")
+    print(f"  Rule hits: {metrics['total_rule_hits']} ({metrics['rule_hit_rate']:.2%})")
+    print(f"  Cache hits: {metrics['total_cache_hits']} ({metrics['cache_hit_rate']:.2%})")
+    print(f"  LLM calls: {metrics['total_llm_calls']}")
+    print()
+
+    # Simulation metrics
+    sim_metrics = sim.get_metrics()
+    print(f"  Vehicles generated: {sim_metrics['vehicles_generated']}")
+    print(f"  Vehicles completed: {sim_metrics['vehicles_completed']}")
+    print(f"  Avg wait time: {sim_metrics['avg_wait_time']:.1f}s")
+    print(f"  Throughput: {sim_metrics['throughput']:.2f} veh/s")
+    print()
+
+    if args.export:
+        import json
+        export_data = {**metrics, **sim_metrics}
+        with open(args.export, 'w', encoding='utf-8') as f:
+            json.dump(export_data, f, ensure_ascii=False, indent=2)
+        print(f"  Metrics exported to {args.export}")
+
+    print("=" * 60)
+
+
 def cmd_benchmark(args) -> None:
     """Run benchmark comparing strategies."""
     from traffic_agent.comparison.benchmark import TimingBenchmark
@@ -159,6 +256,7 @@ def main():
     run_parser.add_argument("--seed", type=int, default=42, help="Random seed")
     run_parser.add_argument("--llm", action="store_true", help="Enable LLM pipeline")
     run_parser.add_argument("--rule", action="store_true", help="Enable rule engine only")
+    run_parser.add_argument("--multi-agent", action="store_true", help="Enable multi-agent mode (CrewAI)")
     run_parser.add_argument("--model", default="LongCat-Flash-Chat", help="LLM model")
     run_parser.add_argument("--api-key", default=None, help="LLM API key")
     run_parser.add_argument("--ns-green", type=float, default=None, help="NS green duration override")

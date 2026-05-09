@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LLM Traffic Timing Assistant — uses LLM to fine-tune traffic signal timing by ±10 seconds based on real-time detector data (vehicles, pedestrians, bicycles). Keeps fixed baseline timing and adds an AI adjustment layer on top. Supports crossroad and T-junction intersections.
+LLM Traffic Timing Assistant — uses CrewAI multi-agent framework + LLM to fine-tune traffic signal timing. Two modes:
 
-The system uses a 3-tier decision pipeline: rule engine (free) → decision cache (free) → LLM call (paid). About 70%+ of decisions are handled by rules and cache.
+1. **Single intersection**: ±10s adjustment via 3-tier pipeline (rules → cache → LLM)
+2. **Multi-agent (CrewAI)**: 3×3 grid with per-intersection Agent, Coordinator Agent, and 6 CrewAI tools
+
+The system uses a 3-tier decision pipeline: rule engine (free) → decision cache (free) → LLM via CrewAI (paid). About 70%+ of decisions are handled by rules and cache.
 
 ## Common Commands
 
@@ -22,6 +25,9 @@ python -m traffic_agent.cli run --type crossroad --scenario morning_peak --steps
 
 # Run simulation with LLM adjustments
 python -m traffic_agent.cli run --steps 200 --llm
+
+# Run multi-agent simulation (CrewAI, 3×3 grid)
+python -m traffic_agent.cli run --multi-agent --steps 100 --verbose
 
 # Run benchmark: fixed vs rule vs LLM pipeline
 python -m traffic_agent.cli benchmark --steps 500
@@ -59,8 +65,14 @@ src/traffic_agent/
 │   ├── scenarios.py         # Traffic scenario definitions (6 presets)
 │   ├── sim_loop.py          # Simulation main loop (TimingSimulation)
 │   ├── engine.py            # Base simulation data structures (legacy)
-│   ├── grid.py              # 3×3 grid simulation (legacy)
+│   ├── grid.py              # 3×3 grid simulation with SignalController
 │   └── osm*.py              # OpenStreetMap network simulation (legacy)
+├── crew/                    # CrewAI multi-agent orchestration
+│   ├── __init__.py          # Package exports
+│   ├── traffic_crew.py      # TrafficControlCrew — 3-tier pipeline + CrewAI
+│   └── coordination.py      # ConflictDetector, GreenWaveAdvisor, PriorityResolver
+├── tools/                   # CrewAI tools
+│   └── traffic_tools.py     # 6 @tool functions + IntersectionState + SimulationState
 ├── llm/
 │   ├── client.py            # LLM client (OpenAI-compatible)
 │   ├── parser.py            # TimingAdjustment parsing + validation
@@ -82,6 +94,7 @@ src/traffic_agent/
 
 ### Key Classes
 
+**Single-intersection path:**
 - `SignalController` — manages signal state, applies ±10s adjustments, enforces safety constraints
 - `DetectorSimulator` — generates detector readings from simulation vehicles
 - `TrendAnalyzer` — tracks traffic flow trends over sliding window
@@ -90,6 +103,16 @@ src/traffic_agent/
 - `TimingSimulation` — ties everything together into a simulation loop
 - `TimingBenchmark` — runs fixed/rule/pipeline strategies and compares results
 - `TimingAdjustment` — LLM output: `{adjustment, reasoning, confidence, alerts}`
+
+**Multi-agent (CrewAI) path:**
+- `TrafficControlCrew` — CrewAI orchestrator with 3-tier pipeline + per-intersection Agents
+- `CrewConfig` — configuration: use_rules, use_cache, enable_coordination, LLM models
+- `ConflictDetector` — detects phase mismatches and excessive green between neighbors
+- `GreenWaveAdvisor` — suggests phase offsets for green wave along corridors
+- `PriorityResolver` — resolves conflicts by emergency → queue → wait → tiebreak
+- `IntersectionState` — traffic state per intersection (queues, waits, phase, emergency)
+- `SimulationState` — shared container: engine + graph reference for CrewAI tools
+- 6 CrewAI `@tool` functions: get_state, get_neighbors, apply_signal, apply_adjustment, check_conflicts, get_trend
 
 ### Signal Phases
 
@@ -118,10 +141,11 @@ The LLM client (`llm/client.py`) loads `.env` from project root if present.
 
 ## Testing
 
-248 tests in `tests/`. No external services required for core tests. LLM-dependent tests use mocks.
+267 tests in `tests/`. No external services required for core tests. LLM-dependent tests use mocks.
 
 ```bash
 python -m pytest tests/ -v                        # all tests
+python -m pytest tests/test_crew.py               # CrewAI tools + crew + coordination
 python -m pytest tests/test_signal_controller.py  # signal controller
 python -m pytest tests/test_timing_rules.py       # rule engine + parser
 python -m pytest tests/test_sim_loop.py           # simulation loop
@@ -129,6 +153,9 @@ python -m pytest tests/test_comparison.py         # benchmark framework
 python -m pytest tests/test_scenarios.py          # scenario presets + runner
 python -m pytest tests/test_optimization.py       # cache, cost tracker, pipeline
 python -m pytest tests/test_detector.py           # detector + trend analyzer
+python -m pytest tests/test_coordination.py       # conflict detection + resolution
+python -m pytest tests/test_grid.py               # grid simulation
+python -m pytest tests/test_visualization.py      # SSE events + dashboard
 ```
 
 Coverage: `python -m pytest tests/ --cov=traffic_agent`

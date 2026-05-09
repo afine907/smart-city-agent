@@ -19,6 +19,11 @@ from traffic_agent.simulation.engine import (
     SimulationEngine,
     Vehicle,
 )
+from traffic_agent.simulation.signal_controller import (
+    SignalController,
+    SignalState,
+    crossroad_plan,
+)
 from traffic_agent.tools.traffic_tools import IntersectionState
 
 
@@ -61,6 +66,9 @@ class GridSimulation:
         self.intersections: Dict[str, Intersection] = {}
         self.segments: Dict[str, RoadSegment] = {}
 
+        # Signal controllers (one per intersection)
+        self.controllers: Dict[str, SignalController] = {}
+
         # Metrics
         self.total_vehicles_generated = 0
         self.total_vehicles_completed = 0
@@ -98,6 +106,11 @@ class GridSimulation:
                 key = f"{from_id}->{to_id}"
                 self.segments[key] = RoadSegment(from_id=from_id, to_id=to_id)
 
+        # Create signal controllers for each intersection
+        plan = crossroad_plan()
+        for ix_id in self.intersections:
+            self.controllers[ix_id] = SignalController(plan)
+
     def get_neighbors(self, ix_id: str) -> List[str]:
         """Get neighbor intersection IDs."""
         row, col = self._parse_id(ix_id)
@@ -117,9 +130,15 @@ class GridSimulation:
             for ix_id in self.intersections
         }
 
+    def get_signal_state(self, ix_id: str) -> SignalState:
+        """Get full signal controller state for an intersection."""
+        return self.controllers[ix_id].get_state()
+
     def get_state(self, ix_id: str) -> IntersectionState:
         """Get current state for an intersection."""
         ix = self.intersections[ix_id]
+        controller = self.controllers[ix_id]
+        signal_state = controller.get_state()
 
         # Count vehicles approaching from each direction
         queue_north = self._count_approaching(ix_id, 0)  # from north
@@ -157,20 +176,41 @@ class GridSimulation:
             wait_south=wait_south * 2.0,
             wait_east=wait_east * 2.0,
             wait_west=wait_west * 2.0,
-            current_phase=ix.current_phase,
-            phase_duration=ix.phase_timer,
+            current_phase=signal_state.current_phase,
+            phase_duration=signal_state.phase_duration,
+            base_duration=signal_state.base_duration,
             emergency=emergency,
             emergency_approach=emergency_approach,
         )
 
     def apply_decision(self, ix_id: str, decision: Dict) -> None:
-        """Apply LLM decision to intersection."""
-        ix = self.intersections[ix_id]
-        new_phase = decision.get("phase", ix.current_phase)
+        """Apply LLM decision to intersection.
 
-        if new_phase != ix.current_phase:
+        Supports two modes:
+        - timing adjustment: {"adjustment": int} — applies ±10s to current green phase
+        - phase switch: {"phase": str} — directly switches to a new phase
+        """
+        ix = self.intersections[ix_id]
+        controller = self.controllers[ix_id]
+
+        # Support timing adjustment (the ±10s model)
+        adjustment = decision.get("adjustment")
+        if adjustment is not None and isinstance(adjustment, (int, float)):
+            controller.apply_adjustment(int(adjustment))
+
+        # Support direct phase switch (legacy)
+        new_phase = decision.get("phase")
+        if new_phase and new_phase != ix.current_phase:
             ix.current_phase = new_phase
             ix.phase_timer = 0.0
+            # Sync controller state
+            signal_phases = ["NS_GREEN", "NS_YELLOW", "ALL_RED_1",
+                             "EW_GREEN", "EW_YELLOW", "ALL_RED_2"]
+            if new_phase in signal_phases:
+                controller._phase_index = signal_phases.index(new_phase)
+            controller._phase_elapsed = 0.0
+            controller._adjustment = 0
+            controller._adjustment_applied = False
 
     def step(self) -> None:
         """Advance simulation by one time step."""
@@ -233,6 +273,9 @@ class GridSimulation:
             ix.current_phase = "NS_GREEN"
             ix.phase_timer = 0.0
 
+        for controller in self.controllers.values():
+            controller.reset()
+
         for seg in self.segments.values():
             seg.vehicles.clear()
 
@@ -244,15 +287,15 @@ class GridSimulation:
         return int(parts[1]), int(parts[2])
 
     def _update_signal(self, ix: Intersection, dt: float) -> None:
-        """Auto-cycle signal phases with yellow and all-red transitions."""
-        phase = ix.current_phase
-        max_duration = PHASE_DURATIONS.get(phase, 30.0)
-
-        if ix.phase_timer >= max_duration:
-            idx = SIGNAL_PHASES.index(phase)
-            next_idx = (idx + 1) % len(SIGNAL_PHASES)
-            ix.current_phase = SIGNAL_PHASES[next_idx]
+        """Auto-cycle signal phases using the signal controller."""
+        controller = self.controllers[ix.id]
+        phase_changed = controller.step(dt)
+        if phase_changed:
+            state = controller.get_state()
+            ix.current_phase = state.current_phase
             ix.phase_timer = 0.0
+        else:
+            ix.phase_timer = controller._phase_elapsed
 
     def _generate_boundary_vehicles(self, dt: float) -> None:
         """Generate vehicles at boundary intersections."""
