@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
+
 from traffic_agent.crew.coordination import (
     ConflictDetector,
     GreenWaveAdvisor,
