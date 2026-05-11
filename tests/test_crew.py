@@ -8,8 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Skip entire module if crewai is not installed
-crewai = pytest.importorskip("crewai", reason="crewai not installed — skipping CrewAI integration tests")
+# crewai is a core dependency — always available
 
 from traffic_agent.crew.coordination import (
     ConflictDetector,
