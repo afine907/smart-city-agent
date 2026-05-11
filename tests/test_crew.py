@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# crewai is a core dependency — always available
+
 
 from traffic_agent.crew.coordination import (
     ConflictDetector,
