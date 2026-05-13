@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AgentFlow } from 'agent-sse-flow';
-import 'agent-sse-flow/style.css';
+import { AgentFlow } from './AgentFlow';
 
 interface PipelineMetrics {
   layer: string;
