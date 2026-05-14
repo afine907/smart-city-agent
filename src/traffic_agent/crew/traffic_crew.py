@@ -30,6 +30,11 @@ from traffic_agent.crew.coordination import ConflictDetector
 # Guardrail: validate that LLM output contains required signal decision fields
 def _validate_signal_decision(output) -> tuple[bool, Any]:
     """Function-based guardrail: check LLM output has valid JSON decision."""
+    # CrewAI 1.14+ passes TaskOutput object; extract raw string
+    if hasattr(output, 'raw'):
+        output = output.raw
+    if not isinstance(output, str):
+        output = str(output)
     try:
         # CrewAI 1.14.x passes TaskOutput object; extract raw string
         text = output.raw if hasattr(output, 'raw') else str(output)
