@@ -4,6 +4,7 @@ import { StatsPanel } from './components/StatsPanel';
 import { SignalIndicator } from './components/SignalIndicator';
 import { EventLog } from './components/EventLog';
 import { ScenarioSelector } from './components/ScenarioSelector';
+import { CrewDashboard } from './components/CrewDashboard';
 import { scenarioList, getScenario } from './simulation/scenarios';
 import type { Scenario } from './simulation/engine';
 import type { SignalController } from './simulation/controller';
@@ -19,6 +20,7 @@ interface Metrics {
   phase: string;
 }
 
+type ViewMode = 'canvas' | 'crewai';
 type ControllerMode = 'fixed' | 'adaptive';
 
 const CONTROLLER_MAP: Record<ControllerMode, () => SignalController> = {
@@ -27,6 +29,7 @@ const CONTROLLER_MAP: Record<ControllerMode, () => SignalController> = {
 };
 
 export default function App() {
+  const [viewMode, setViewMode] = useState<ViewMode>('canvas');
   const [scenarioName, setScenarioName] = useState('crossroad');
   const [scenario, setScenario] = useState<Scenario>(() => getScenario('crossroad'));
   const [controllerMode, setControllerMode] = useState<ControllerMode>('fixed');
@@ -36,7 +39,6 @@ export default function App() {
   const [running, setRunning] = useState(false);
 
   const controller = useMemo(() => CONTROLLER_MAP[controllerMode](), [controllerMode]);
-
   const { connected, events: sseEvents } = useSSE('/api/events/stream');
 
   const handleScenarioChange = useCallback((name: string) => {
@@ -49,9 +51,21 @@ export default function App() {
     setMetrics(m);
   }, []);
 
-  const handleStart = useCallback(() => {
-    setRunning(prev => !prev);
-  }, []);
+  const handleStart = useCallback(async () => {
+    if (viewMode === 'crewai') {
+      if (running) {
+        await fetch('/api/simulation/stop', { method: 'POST' });
+        setRunning(false);
+      } else {
+        const res = await fetch('/api/simulation/start?mode=crewai&steps=200', { method: 'POST' });
+        if (res.ok) {
+          setRunning(true);
+        }
+      }
+    } else {
+      setRunning(prev => !prev);
+    }
+  }, [running, viewMode]);
 
   const handleEmergency = useCallback(() => {
     const canvas = document.querySelector('canvas');
@@ -66,65 +80,95 @@ export default function App() {
       <header className="header">
         <div className="header-left">
           <h1 className="title">Traffic Agent</h1>
-          <span className="subtitle">LLM Traffic Controller</span>
+          <span className="subtitle">
+            {viewMode === 'crewai' ? 'CrewAI Multi-Agent Controller' : 'LLM Traffic Controller'}
+          </span>
         </div>
         <div className="header-center">
-          <ScenarioSelector
-            scenarios={scenarioList}
-            current={scenarioName}
-            onSelect={handleScenarioChange}
-          />
-        </div>
-        <div className="header-right">
-          <div className="controller-toggle">
+          <div className="view-toggle">
             <button
-              className={`btn btn-mode ${controllerMode === 'fixed' ? 'active' : ''}`}
-              onClick={() => setControllerMode('fixed')}
+              className={`btn btn-mode ${viewMode === 'canvas' ? 'active' : ''}`}
+              onClick={() => setViewMode('canvas')}
             >
-              Fixed
+              Canvas
             </button>
             <button
-              className={`btn btn-mode ${controllerMode === 'adaptive' ? 'active' : ''}`}
-              onClick={() => setControllerMode('adaptive')}
+              className={`btn btn-mode ${viewMode === 'crewai' ? 'active' : ''}`}
+              onClick={() => setViewMode('crewai')}
             >
-              Adaptive
+              CrewAI
             </button>
           </div>
-          <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+          {viewMode === 'canvas' && (
+            <ScenarioSelector
+              scenarios={scenarioList}
+              current={scenarioName}
+              onSelect={handleScenarioChange}
+            />
+          )}
+        </div>
+        <div className="header-right">
+          {viewMode === 'canvas' && (
+            <>
+              <div className="controller-toggle">
+                <button
+                  className={`btn btn-mode ${controllerMode === 'fixed' ? 'active' : ''}`}
+                  onClick={() => setControllerMode('fixed')}
+                >
+                  Fixed
+                </button>
+                <button
+                  className={`btn btn-mode ${controllerMode === 'adaptive' ? 'active' : ''}`}
+                  onClick={() => setControllerMode('adaptive')}
+                >
+                  Adaptive
+                </button>
+              </div>
+              <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+            </>
+          )}
           <button className="btn btn-start" onClick={handleStart}>
             {running ? '⏸ Pause' : '▶ Start'}
           </button>
-          <button className="btn btn-emergency" onClick={handleEmergency}>
-            🚑 Emergency
-          </button>
+          {viewMode === 'canvas' && (
+            <button className="btn btn-emergency" onClick={handleEmergency}>
+              🚑 Emergency
+            </button>
+          )}
         </div>
       </header>
 
       <main className="main">
-        <IntersectionCanvas
-          scenario={scenario}
-          controller={controller}
-          running={running}
-          onMetrics={handleMetrics}
-        />
+        {viewMode === 'crewai' ? (
+          <CrewDashboard running={running} />
+        ) : (
+          <IntersectionCanvas
+            scenario={scenario}
+            controller={controller}
+            running={running}
+            onMetrics={handleMetrics}
+          />
+        )}
       </main>
 
-      <aside className="sidebar">
-        <SignalIndicator
-          phase={metrics.phase}
-          phaseTimer={0}
-          phaseDuration={scenario.phaseDuration}
-          getPhaseLabel={scenario.getPhaseLabel}
-        />
-        <StatsPanel
-          vehicles={metrics.vehicles}
-          completed={metrics.completed}
-          avgWait={metrics.avgWait}
-          throughput={metrics.throughput}
-          simStep={metrics.simStep}
-        />
-        <EventLog events={sseEvents} />
-      </aside>
+      {viewMode === 'canvas' && (
+        <aside className="sidebar">
+          <SignalIndicator
+            phase={metrics.phase}
+            phaseTimer={0}
+            phaseDuration={scenario.phaseDuration}
+            getPhaseLabel={scenario.getPhaseLabel}
+          />
+          <StatsPanel
+            vehicles={metrics.vehicles}
+            completed={metrics.completed}
+            avgWait={metrics.avgWait}
+            throughput={metrics.throughput}
+            simStep={metrics.simStep}
+          />
+          <EventLog events={sseEvents} />
+        </aside>
+      )}
     </div>
   );
 }

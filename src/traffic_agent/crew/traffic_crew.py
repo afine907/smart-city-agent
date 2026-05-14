@@ -28,15 +28,17 @@ from traffic_agent.crew.coordination import ConflictDetector
 
 
 # Guardrail: validate that LLM output contains required signal decision fields
-def _validate_signal_decision(output: str) -> tuple[bool, Any]:
+def _validate_signal_decision(output) -> tuple[bool, Any]:
     """Function-based guardrail: check LLM output has valid JSON decision."""
     try:
+        # CrewAI 1.14.x passes TaskOutput object; extract raw string
+        text = output.raw if hasattr(output, 'raw') else str(output)
         # Find JSON in the output
-        start = output.find("{")
-        end = output.rfind("}") + 1
+        start = text.find("{")
+        end = text.rfind("}") + 1
         if start == -1 or end == 0:
             return False, "No JSON object found in output"
-        data = json.loads(output[start:end])
+        data = json.loads(text[start:end])
 
         required = ["action", "phase", "duration"]
         missing = [f for f in required if f not in data]
@@ -116,20 +118,22 @@ class TrafficControlCrew:
         self.coordinator_tools = all_tools[:3]  # state, neighbors, conflicts
 
         # Create LLM instances
-        fast_llm = f"openai/{self.config.llm.fast_model}"
-        smart_llm = f"openai/{self.config.llm.smart_model}"
+        # Use fast_model for all agents to avoid rate limiting on smart_model
+        model = self.config.llm.fast_model
+        fast_llm = f"openai/{model}"
+        smart_llm = f"openai/{model}"
         function_llm = fast_llm  # same model for tool-calling mechanics
 
         # If custom api_key/base_url, use CrewAI LLM object
         if self.config.llm.api_key:
-            from crewai.llms import LLM
+            from crewai import LLM
             fast_llm = LLM(
-                model=f"openai/{self.config.llm.fast_model}",
+                model=f"openai/{model}",
                 api_key=self.config.llm.api_key,
                 base_url=self.config.llm.api_base,
             )
             smart_llm = LLM(
-                model=f"openai/{self.config.llm.smart_model}",
+                model=f"openai/{model}",
                 api_key=self.config.llm.api_key,
                 base_url=self.config.llm.api_base,
             )
@@ -161,7 +165,7 @@ class TrafficControlCrew:
                 verbose=False,
                 allow_delegation=False,
                 max_iter=12,
-                max_execution_time=30,
+                max_execution_time=120,
             )
             self.intersection_agents[ix_id] = agent
 
@@ -184,7 +188,7 @@ class TrafficControlCrew:
             verbose=False,
             allow_delegation=False,
             max_iter=15,
-            max_execution_time=45,
+            max_execution_time=180,
         )
 
     def set_engine(self, engine) -> None:
@@ -373,11 +377,12 @@ class TrafficControlCrew:
                     raw = task_output.raw if hasattr(task_output, 'raw') else str(task_output)
                     parsed = ResponseParser.parse(raw)
                     if parsed:
-                        # Match to intersection by agent role
+                        # Match to intersection by agent role (CrewAI 1.14.x: agent is str)
                         agent = task_output.agent if hasattr(task_output, 'agent') else None
-                        if agent and hasattr(agent, 'role'):
+                        if agent:
+                            role = agent.role if hasattr(agent, 'role') else str(agent)
                             for ix_id in intersection_ids:
-                                if ix_id in agent.role:
+                                if ix_id in role:
                                     decisions[ix_id] = parsed
                                     break
         except Exception:
