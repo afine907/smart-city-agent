@@ -4,6 +4,13 @@ SSE API Server — FastAPI server for real-time Agent reasoning visualization.
 Provides SSE streaming, simulation control, and dashboard serving.
 """
 
+# pysqlite3-binary workaround for ChromaDB (sqlite3 >= 3.35.0 required)
+import sys
+try:
+    sys.modules['sqlite3'] = __import__('pysqlite3')
+except ImportError:
+    pass
+
 import asyncio
 import contextlib
 import json
@@ -576,6 +583,8 @@ async def _run_crewai_simulation(steps: int, speed: float):
         ))
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         _collector.emit(SSEEvent(
             event_type=EventType.SIMULATION_END,
             agent_id="system",
