@@ -36,14 +36,12 @@ def _validate_signal_decision(output) -> tuple[bool, Any]:
     if not isinstance(output, str):
         output = str(output)
     try:
-        # CrewAI 1.14.x passes TaskOutput object; extract raw string
-        text = output.raw if hasattr(output, 'raw') else str(output)
         # Find JSON in the output
-        start = text.find("{")
-        end = text.rfind("}") + 1
+        start = output.find("{")
+        end = output.rfind("}") + 1
         if start == -1 or end == 0:
             return False, "No JSON object found in output"
-        data = json.loads(text[start:end])
+        data = json.loads(output[start:end])
 
         required = ["action", "phase", "duration"]
         missing = [f for f in required if f not in data]
@@ -143,7 +141,7 @@ class TrafficControlCrew:
                 base_url=self.config.llm.api_base,
             )
             function_llm = LLM(
-                model=f"openai/{self.config.llm.fast_model}",
+                model=f"openai/{model}",
                 api_key=self.config.llm.api_key,
                 base_url=self.config.llm.api_base,
             )

@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import time
+import traceback
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -583,7 +584,6 @@ async def _run_crewai_simulation(steps: int, speed: float):
         ))
 
     except Exception as e:
-        import traceback
         traceback.print_exc()
         _collector.emit(SSEEvent(
             event_type=EventType.SIMULATION_END,
