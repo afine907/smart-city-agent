@@ -1,0 +1,31 @@
+{
+  "intersection_type": "crossroad",
+  "scenario": "morning_peak",
+  "total_steps": 100,
+  "adjustments": [
+    {
+      "step": 6,
+      "phase": "NS_GREEN",
+      "adjustment": -5,
+      "reason": "对向排队2辆是当前方向1辆的2.0倍，建议缩短5秒让行",
+      "source": "rule",
+      "confidence": 0.8
+    },
+    {
+      "step": 61,
+      "phase": "EW_GREEN",
+      "adjustment": -5,
+      "reason": "对向排队15辆是当前方向0辆的15.0倍，建议缩短5秒让行",
+      "source": "rule",
+      "confidence": 0.8
+    }
+  ],
+  "pipeline_stats": {
+    "total_decisions": 80,
+    "layer1_rules": 80,
+    "rule_rate": 1.0,
+    "layer2_cache": 0,
+    "layer3_llm": 0,
+    "free_rate": 1.0
+  }
+}
