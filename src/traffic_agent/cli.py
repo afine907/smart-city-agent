@@ -8,8 +8,14 @@ Usage:
     python -m traffic_agent.cli scenarios
 """
 
+from __future__ import annotations
+
+
 import argparse
+import logging
 import sys
+
+logger = logging.getLogger(__name__)
 
 
 def cmd_run(args) -> None:
@@ -20,7 +26,7 @@ def cmd_run(args) -> None:
     from traffic_agent.simulation.sim_loop import TimingSimulation
 
     # Optionally create pipeline for LLM/rule decisions
-    pipeline = None
+    pipeline = None  # type: ignore[assignment]
     if args.llm:
         from traffic_agent.llm.client import LLMConfig
         from traffic_agent.optimization.layered import TimingDecisionPipeline
@@ -32,21 +38,7 @@ def cmd_run(args) -> None:
         pipeline = TimingDecisionPipeline(llm_config=llm_config)
         print(f"  LLM pipeline enabled (model: {args.model})")
     elif args.rule:
-        from traffic_agent.optimization.rule_engine import TimingRuleEngine
-        from traffic_agent.llm.parser import TimingAdjustment
-
-        class RuleOnlyPipeline:
-            def __init__(self):
-                self.rule_engine = TimingRuleEngine()
-
-            def decide(self, detector_data, signal_state, trend=None, **kwargs):
-                result = self.rule_engine.decide(detector_data, signal_state, trend)
-                if result:
-                    return result
-                return TimingAdjustment.no_adjustment("规则未命中，不调整")
-
-            def get_stats(self):
-                return self.rule_engine.get_stats()
+        from traffic_agent.optimization.rule_only import RuleOnlyPipeline
 
         pipeline = RuleOnlyPipeline()
         print("  Rule engine enabled")
@@ -160,7 +152,7 @@ def cmd_run_multi_agent(args) -> None:
         decisions = crew.step(sim)
 
         if args.verbose and step % 50 == 0:
-            layers = {}
+            layers: dict[str, int] = {}
             for d in decisions:
                 layer = d.get("layer", "unknown")
                 layers[layer] = layers.get(layer, 0) + 1
@@ -240,6 +232,24 @@ def cmd_scenarios(args) -> None:
         print(f"  {s['name']:<20} {s['name_cn']:<10} {s['description']}")
 
 
+def cmd_serve(args) -> None:
+    """Start the API server for the dashboard."""
+    import uvicorn
+
+    print(f"  Starting API server on {args.host}:{args.port}")
+    print(f"  Dashboard: http://{args.host}:{args.port}/")
+    print(f"  API docs:  http://{args.host}:{args.port}/docs")
+    print()
+
+    uvicorn.run(
+        "traffic_agent.api.sse_server:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        log_level="info",
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="LLM Traffic Signal Timing Adjustment Controller"
@@ -283,13 +293,38 @@ def main():
     scenarios_parser = subparsers.add_parser("scenarios", help="List available scenarios")
     scenarios_parser.set_defaults(func=cmd_scenarios)
 
+    # Serve command
+    serve_parser = subparsers.add_parser("serve", help="Start the API server")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Bind host")
+    serve_parser.add_argument("--port", type=int, default=8080, help="Bind port")
+    serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    serve_parser.set_defaults(func=cmd_serve)
+
     args = parser.parse_args()
 
     if args.command is None:
         parser.print_help()
         sys.exit(1)
 
-    args.func(args)
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print("\n  Interrupted by user")
+        sys.exit(130)
+    except ImportError as e:
+        print(f"\n  ❌ Missing dependency: {e}")
+        print("  Try: pip install -e '.[llm,dev]'")
+        sys.exit(1)
+    except FileNotFoundError as e:
+        print(f"\n  ❌ File not found: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.exception("Unexpected error")
+        print(f"\n  ❌ Error: {e}")
+        if args.verbose if hasattr(args, 'verbose') else False:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
