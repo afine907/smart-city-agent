@@ -4,6 +4,9 @@ Route planning for OSM traffic simulation.
 Provides Dijkstra shortest-path routing between intersections.
 """
 
+from __future__ import annotations
+
+
 import heapq
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -92,11 +95,11 @@ class RoutePlanner:
             return None  # Unreachable
         
         # Reconstruct path
-        path = []
-        node = end
+        path: list[str] = []
+        node: str | None = end
         while node is not None:
             path.append(node)
-            node = prev[node]
+            node = prev.get(node)
         path.reverse()
         
         # Cache result

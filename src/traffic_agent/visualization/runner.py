@@ -4,6 +4,9 @@ Simulation Runner — Ties Simulation + EventCollector for SSE visualization.
 Supports both GridSimulation and OSMSimulation.
 """
 
+from __future__ import annotations
+
+
 import time
 from typing import Union
 

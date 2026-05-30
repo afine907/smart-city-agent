@@ -4,10 +4,14 @@ Grid Simulation — 3x3 intersection network with vehicle flow.
 Vehicles move between intersections, creating realistic traffic patterns.
 """
 
+from __future__ import annotations
+
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from numpy.random import Generator, PCG64
 
 from traffic_agent.simulation.engine import (
     GREEN_APPROACHES,
@@ -77,8 +81,8 @@ class GridSimulation:
         # Vehicle ID counter
         self._vehicle_counter = 0
 
-        if self.config.seed is not None:
-            np.random.seed(self.config.seed)
+        # Use local random generator to avoid global state pollution
+        self._rng = Generator(PCG64(self.config.seed))
 
         self._build_grid()
 
@@ -310,17 +314,17 @@ class GridSimulation:
         ]
 
         for row, col in boundaries:
-            if np.random.random() < self.config.arrival_rate * dt:
+            if self._rng.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
                 self.total_vehicles_generated += 1
 
                 # Random destination
-                dest_row = np.random.randint(0, self.rows)
-                dest_col = np.random.randint(0, self.cols)
+                dest_row = self._rng.integers(0, self.rows)
+                dest_col = self._rng.integers(0, self.cols)
 
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
-                    approach=np.random.randint(0, 4),
+                    approach=int(self._rng.integers(0, 4)),
                     position=self.config.road_length,
                     speed=self.config.speed_limit,
                 )
@@ -342,7 +346,7 @@ class GridSimulation:
             candidates.append(f"ix_{row}_{col+1}->ix_{row}_{col}")
 
         if candidates:
-            seg_key = np.random.choice(candidates)
+            seg_key = self._rng.choice(candidates)
             if seg_key in self.segments:
                 self.segments[seg_key].vehicles.append(vehicle)
 
@@ -443,7 +447,7 @@ class GridSimulation:
                     turn_candidates.append((new_approach, new_key))
 
         if turn_candidates:
-            new_approach, new_key = turn_candidates[np.random.randint(len(turn_candidates))]
+            new_approach, new_key = turn_candidates[self._rng.integers(len(turn_candidates))]
             vehicle.position = self.config.road_length
             vehicle.approach = new_approach
             self.segments[new_key].vehicles.append(vehicle)

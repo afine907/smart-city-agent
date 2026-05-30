@@ -6,6 +6,9 @@ Prompts are used by the multi-agent coordination system.
 Tools are used by CrewAI agents to interact with the simulation.
 """
 
+from __future__ import annotations
+
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 

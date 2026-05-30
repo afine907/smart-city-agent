@@ -4,6 +4,9 @@ Scenario Runner — runs multi-phase simulations using the new timing architectu
 Bridges the old ScenarioConfig presets with the new TimingSimulation engine.
 """
 
+from __future__ import annotations
+
+
 import time
 from typing import Optional
 
@@ -47,31 +50,7 @@ class ScenarioRunner:
 
     def run_rule(self) -> StrategyResult:
         """Run scenario with rule engine only (no LLM)."""
-        from traffic_agent.optimization.rule_engine import TimingRuleEngine
-        from traffic_agent.llm.parser import TimingAdjustment
-
-        class RuleOnlyPipeline:
-            def __init__(self):
-                self.rule_engine = TimingRuleEngine()
-                self._stats = {"total_decisions": 0, "layer1_rules": 0}
-
-            def decide(self, detector_data, signal_state, trend=None, **kwargs):
-                self._stats["total_decisions"] += 1
-                result = self.rule_engine.decide(detector_data, signal_state, trend)
-                if result:
-                    self._stats["layer1_rules"] += 1
-                    return result
-                return TimingAdjustment.no_adjustment("规则未命中，不调整")
-
-            def get_stats(self):
-                total = max(1, self._stats["total_decisions"])
-                return {
-                    **self._stats,
-                    "rule_rate": self._stats["layer1_rules"] / total,
-                    "layer2_cache": 0,
-                    "layer3_llm": 0,
-                    "free_rate": 1.0,
-                }
+        from traffic_agent.optimization.rule_only import RuleOnlyPipeline
 
         start = time.time()
         pipeline = RuleOnlyPipeline()

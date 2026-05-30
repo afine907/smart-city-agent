@@ -4,6 +4,9 @@ SSE Events — Event collection and emission for Agent reasoning visualization.
 Captures thinking, decisions, conflicts, and coordination during simulation runs.
 """
 
+from __future__ import annotations
+
+
 import contextlib
 import json
 import time

@@ -5,10 +5,14 @@ Extends the grid simulation concept to work with arbitrary road network
 topologies loaded from OSM data.
 """
 
+from __future__ import annotations
+
+
 import math
 from dataclasses import dataclass, field
 
 import numpy as np
+from numpy.random import Generator, PCG64
 
 from traffic_agent.simulation.engine import (
     GREEN_APPROACHES,
@@ -84,8 +88,8 @@ class OSMSimulation:
         # Vehicle destinations: vehicle_id -> destination intersection_id
         self.vehicle_destinations: dict[str, str] = {}
 
-        if self.config.seed is not None:
-            np.random.seed(self.config.seed)
+        # Use local random generator to avoid global state pollution
+        self._rng = Generator(PCG64(self.config.seed))
 
         self._build_network()
 
@@ -169,8 +173,8 @@ class OSMSimulation:
         # For bidirectional roads, all intersections may have >=2 in/out.
         # Instead, identify boundaries as intersections with fewer total connections
         # (edge/corner of the network) or those at the network perimeter.
-        incoming_count = {}
-        outgoing_count = {}
+        incoming_count: dict[str, int] = {}
+        outgoing_count: dict[str, int] = {}
         for seg in self.segments.values():
             if seg.road_id.startswith("virtual"):
                 continue
@@ -395,18 +399,18 @@ class OSMSimulation:
             return
 
         for ix_id in self.boundary_intersections:
-            if np.random.random() < self.config.arrival_rate * dt:
+            if self._rng.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
                 self.total_vehicles_generated += 1
 
                 # Assign random destination (different from source)
                 dest = ix_id
                 while dest == ix_id and len(all_ids) > 1:
-                    dest = all_ids[np.random.randint(len(all_ids))]
+                    dest = all_ids[self._rng.integers(len(all_ids))]
                 self.vehicle_destinations[f"v_{self._vehicle_counter}"] = dest
 
                 # Create vehicle approaching this intersection
-                approach = np.random.randint(0, 4)
+                approach = int(self._rng.integers(0, 4))
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=approach,
@@ -428,7 +432,7 @@ class OSMSimulation:
 
         if incoming:
             # Add to a random incoming segment
-            seg = incoming[np.random.randint(len(incoming))]
+            seg = incoming[self._rng.integers(len(incoming))]
             vehicle.position = seg.length
             vehicle.speed = seg.speed_limit
             # Set approach: direction FROM the intersection BACK to where the vehicle came from
@@ -531,7 +535,7 @@ class OSMSimulation:
             outgoing = [seg for seg in self.segments.values() if seg.from_id == from_id]
             if not outgoing:
                 return None
-            next_seg = outgoing[np.random.randint(len(outgoing))]
+            next_seg = outgoing[self._rng.integers(len(outgoing))]
             vehicle.position = next_seg.length
             # approach: direction from intersection back to vehicle origin
             vehicle.approach = self._road_to_approach(next_seg.to_id, from_id)
@@ -546,7 +550,7 @@ class OSMSimulation:
             if not outgoing:
                 self.vehicle_destinations.pop(vehicle.id, None)
                 return None
-            next_seg = outgoing[np.random.randint(len(outgoing))]
+            next_seg = outgoing[self._rng.integers(len(outgoing))]
             vehicle.position = next_seg.length
             vehicle.approach = self._road_to_approach(next_seg.to_id, from_id)
             next_seg.vehicles.append(vehicle)

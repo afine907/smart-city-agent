@@ -12,12 +12,15 @@ This is the main entry point for running a single-intersection
 simulation with AI-assisted timing adjustment.
 """
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from numpy.random import Generator, PCG64
 
 from traffic_agent.llm.parser import TimingAdjustment
 from traffic_agent.simulation.detector import DetectorData, DetectorReading, DetectorSimulator, TrendAnalyzer
@@ -99,8 +102,8 @@ class TimingSimulation:
         self.pipeline = pipeline
         self.seed = seed
 
-        if seed is not None:
-            np.random.seed(seed)
+        # Use local random generator to avoid global state pollution
+        self._rng = Generator(PCG64(seed))
 
         # Create signal plan
         if intersection_type == "tjunction":
@@ -253,7 +256,7 @@ class TimingSimulation:
 
         for approach_idx, direction in self._approach_map.items():
             rate = traffic_phase.get_arrival_rate(direction)
-            if np.random.random() < rate:
+            if self._rng.random() < rate:
                 self._vehicle_counter += 1
                 self._total_generated += 1
                 generated += 1
@@ -265,7 +268,7 @@ class TimingSimulation:
                 })
 
             # Pedestrians
-            if np.random.random() < traffic_phase.pedestrian_rate:
+            if self._rng.random() < traffic_phase.pedestrian_rate:
                 self._vehicle_counter += 1
                 self._vehicles[direction].append({
                     "id": f"ped_{self._vehicle_counter}",
@@ -276,7 +279,7 @@ class TimingSimulation:
                 })
 
             # Bicycles
-            if np.random.random() < traffic_phase.bicycle_rate:
+            if self._rng.random() < traffic_phase.bicycle_rate:
                 self._vehicle_counter += 1
                 self._vehicles[direction].append({
                     "id": f"bike_{self._vehicle_counter}",

@@ -6,6 +6,9 @@ Handles JSON extraction, validation, and fallback for two models:
 2. TrafficDecision (legacy): LLM controls phase and duration directly
 """
 
+from __future__ import annotations
+
+
 import json
 import re
 from dataclasses import dataclass, field

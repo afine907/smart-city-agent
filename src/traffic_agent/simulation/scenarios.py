@@ -6,6 +6,9 @@ modeling real-world patterns like morning rush hour,
 evening commute, accidents, and balanced periods.
 """
 
+from __future__ import annotations
+
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 

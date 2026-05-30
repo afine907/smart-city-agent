@@ -5,12 +5,15 @@ Zero external dependencies. Provides realistic traffic data
 for LLM agents to make decisions on.
 """
 
+from __future__ import annotations
+
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+from numpy.random import Generator, PCG64
 
 from traffic_agent.tools.traffic_tools import IntersectionState
 
@@ -116,9 +119,7 @@ class SimulationEngine:
         self.time: float = 0.0
         self.step_count: int = 0
         self._vehicle_counter: int = 0
-        
-        if self.config.seed is not None:
-            np.random.seed(self.config.seed)
+        self._rng = Generator(PCG64(self.config.seed))
     
     def add_intersection(self, ix_id: str, approaches: int = 4) -> None:
         ix = Intersection(id=ix_id, approaches=approaches)
@@ -217,9 +218,9 @@ class SimulationEngine:
 
     def _generate_vehicles(self, ix: Intersection, dt: float) -> None:
         for approach in range(ix.approaches):
-            if np.random.random() < self.config.arrival_rate * dt:
+            if self._rng.random() < self.config.arrival_rate * dt:
                 self._vehicle_counter += 1
-                is_emergency = np.random.random() < self.config.emergency_rate
+                is_emergency = self._rng.random() < self.config.emergency_rate
                 v = Vehicle(
                     id=f"v_{self._vehicle_counter}",
                     approach=approach,
@@ -305,7 +306,7 @@ class SimulationEngine:
                 wait_times.append(ix.get_wait_time(approach))
         
         if wait_times:
-            metrics["avg_wait_time"] = np.mean(wait_times)
-            metrics["max_wait_time"] = np.max(wait_times)
+            metrics["avg_wait_time"] = float(np.mean(wait_times))
+            metrics["max_wait_time"] = float(np.max(wait_times))
         
         return metrics

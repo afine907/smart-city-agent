@@ -5,6 +5,9 @@ Detects when neighboring intersections have conflicting signal phases,
 advises green wave offsets, and resolves conflicts by priority.
 """
 
+from __future__ import annotations
+
+
 from typing import Dict, List, Optional, Tuple
 
 from traffic_agent.llm.parser import TrafficDecision

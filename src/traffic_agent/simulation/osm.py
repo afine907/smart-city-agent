@@ -5,6 +5,9 @@ Downloads real road networks from OSM and converts them to
 the simulation's intersection/segment format.
 """
 
+from __future__ import annotations
+
+
 import json
 import math
 from dataclasses import dataclass, field
@@ -235,8 +238,8 @@ class OSMNetwork:
         """Load from GeoJSON dict."""
         features = data.get("features", [])
 
-        intersections = {}
-        roads = {}
+        intersections: dict[str, OSMIntersection] = {}
+        roads: dict[str, OSMRoad] = {}
 
         for feature in features:
             geom = feature.get("geometry", {})

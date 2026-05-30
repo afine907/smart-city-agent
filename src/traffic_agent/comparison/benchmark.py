@@ -5,6 +5,9 @@ Runs identical simulations with different decision strategies,
 then produces quantitative comparison reports.
 """
 
+from __future__ import annotations
+
+
 import json
 import time
 from dataclasses import dataclass, field
@@ -216,33 +219,7 @@ class TimingBenchmark:
 
     def _run_rule(self) -> SimulationReport:
         """Run with rule engine only (no LLM)."""
-        # Create a pipeline but only use rules (no cache, no LLM)
-        from traffic_agent.optimization.rule_engine import TimingRuleEngine
-        from traffic_agent.llm.parser import TimingAdjustment
-
-        class RuleOnlyPipeline:
-            """Pipeline that only uses rules, never calls LLM."""
-            def __init__(self):
-                self.rule_engine = TimingRuleEngine()
-                self._stats = {"total_decisions": 0, "layer1_rules": 0}
-
-            def decide(self, detector_data, signal_state, trend=None, **kwargs):
-                self._stats["total_decisions"] += 1
-                result = self.rule_engine.decide(detector_data, signal_state, trend)
-                if result:
-                    self._stats["layer1_rules"] += 1
-                    return result
-                return TimingAdjustment.no_adjustment("规则未命中，不调整")
-
-            def get_stats(self):
-                total = max(1, self._stats["total_decisions"])
-                return {
-                    **self._stats,
-                    "rule_rate": self._stats["layer1_rules"] / total,
-                    "layer2_cache": 0,
-                    "layer3_llm": 0,
-                    "free_rate": 1.0,
-                }
+        from traffic_agent.optimization.rule_only import RuleOnlyPipeline
 
         pipeline = RuleOnlyPipeline()
         sim = TimingSimulation(

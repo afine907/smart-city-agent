@@ -12,6 +12,9 @@ Core concept:
 - Maximum green time is always enforced (90s)
 """
 
+from __future__ import annotations
+
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
