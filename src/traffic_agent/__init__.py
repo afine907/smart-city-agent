@@ -4,5 +4,11 @@ LLM Traffic Controller — AI-Powered Traffic Signal Control
 Multi-Agent system using LLMs for intelligent traffic management.
 """
 
-__version__ = "0.1.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("llm-traffic-timing")
+except PackageNotFoundError:
+    __version__ = "0.2.0"  # fallback for development
+
 __author__ = "afine907"
