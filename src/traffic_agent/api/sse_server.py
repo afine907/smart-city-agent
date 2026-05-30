@@ -4,6 +4,9 @@ SSE API Server — FastAPI server for real-time Agent reasoning visualization.
 Provides SSE streaming, simulation control, and dashboard serving.
 """
 
+from __future__ import annotations
+
+
 # pysqlite3-binary workaround for ChromaDB (sqlite3 >= 3.35.0 required)
 import sys
 try:
@@ -26,7 +29,11 @@ from sse_starlette.sse import EventSourceResponse
 
 from traffic_agent.visualization.events import EventCollector, EventType, SSEEvent
 
-app = FastAPI(title="LLM Traffic Controller — Dashboard", version="0.1.0")
+app = FastAPI(
+    title="LLM Traffic Controller — Dashboard",
+    version="0.2.0",
+    description="AI-Powered Traffic Signal Control System",
+)
 
 # CORS for local development
 app.add_middleware(
@@ -44,6 +51,22 @@ _network_topology: dict = {}
 _crew = None
 _sim = None
 _sim_state: dict = {}
+_simulation_lock = asyncio.Lock()
+
+
+@app.get("/healthz", tags=["Health"])
+async def health_check():
+    """Liveness probe — returns 200 if the server is running."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz", tags=["Health"])
+async def readiness_check():
+    """Readiness probe — returns 200 if the server can accept requests."""
+    return {
+        "status": "ready",
+        "simulation_running": _simulation_running,
+    }
 
 
 def get_collector() -> EventCollector:
@@ -72,6 +95,25 @@ async def serve_dashboard():
     if index_path.exists():
         return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
     return HTMLResponse(content="<h1>Dashboard not built. Run: cd dashboard && npm run build</h1>", status_code=404)
+
+
+# ─── Health check endpoints ───────────────────────────────────────────
+
+
+@app.get("/healthz")
+async def health_check():
+    """Liveness probe — returns 200 if the server is running."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz")
+async def readiness_check():
+    """Readiness probe — returns 200 if the server can accept requests."""
+    return {
+        "status": "ready",
+        "simulation_running": _simulation_running,
+        "events_collected": _collector.count,
+    }
 
 
 # ─── Existing SSE stream (kept for backward compatibility) ────────────
@@ -144,11 +186,12 @@ async def start_simulation(
     """Start a simulation run. mode='local' | 'crewai'."""
     global _simulation_running, _simulation_task
 
-    if _simulation_running:
-        return JSONResponse({"error": "Simulation already running"}, status_code=409)
+    async with _simulation_lock:
+        if _simulation_running:
+            return JSONResponse({"error": "Simulation already running"}, status_code=409)
 
-    _simulation_running = True
-    _collector.clear()
+        _simulation_running = True
+        _collector.clear()
 
     if mode == "crewai":
         _simulation_task = asyncio.create_task(_run_crewai_simulation(steps, speed))
@@ -162,13 +205,14 @@ async def stop_simulation():
     """Stop the running simulation."""
     global _simulation_running, _simulation_task
 
-    if not _simulation_running:
-        return JSONResponse({"error": "No simulation running"}, status_code=409)
+    async with _simulation_lock:
+        if not _simulation_running:
+            return JSONResponse({"error": "No simulation running"}, status_code=409)
 
-    _simulation_running = False
-    if _simulation_task:
-        _simulation_task.cancel()
-        _simulation_task = None
+        _simulation_running = False
+        if _simulation_task:
+            _simulation_task.cancel()
+            _simulation_task = None
 
     return {"status": "stopped"}
 
@@ -344,18 +388,18 @@ async def _run_simulation(steps: int, speed: float, preset: str | None = None):
             net_type = f"osm_{preset}"
         else:
             from traffic_agent.simulation.grid import GridSimulation
-            sim = GridSimulation(config=config)
+            sim = GridSimulation(config=config)  # type: ignore[assignment]
             net_type = "grid_3x3"
 
         if hasattr(sim, "intersections") and hasattr(sim, "segments"):
-            osm_ix = sim.osm.intersections
+            osm_ix = sim.osm.intersections if hasattr(sim, "osm") else {}
             _network_topology = {
                 "type": net_type,
                 "intersections": {
                     ix_id: {
                         "lat": osm_ix[ix_id].lat if ix_id in osm_ix else 0,
                         "lon": osm_ix[ix_id].lon if ix_id in osm_ix else 0,
-                        "neighbors": sim.get_neighbors(ix_id),
+                        "neighbors": sim.get_neighbors(ix_id) if hasattr(sim, "get_neighbors") else [],
                     }
                     for ix_id in sim.intersections
                 },
@@ -506,7 +550,7 @@ async def _run_crewai_simulation(steps: int, speed: float):
             sim.step()
 
             # Run CrewAI pipeline (may block on LLM calls)
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             decisions = await loop.run_in_executor(None, crew.step, sim)
 
             step_duration = (time.time() - step_start) * 1000
