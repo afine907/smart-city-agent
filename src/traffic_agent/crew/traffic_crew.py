@@ -9,10 +9,15 @@ Uses CrewAI framework with 3-tier decision pipeline:
 Agents interact with the simulation through CrewAI tools.
 """
 
+from __future__ import annotations
+
 import json
+import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from traffic_agent.llm.client import LLMConfig
 from traffic_agent.llm.parser import ResponseParser, TrafficDecision
@@ -114,8 +119,8 @@ class TrafficControlCrew:
 
         # Create tools — intersection agents get 4, coordinator gets 3
         all_tools = _create_tools()
-        self.intersection_tools = all_tools[:4]  # state, neighbors, adjust, signal
-        self.coordinator_tools = all_tools[:3]  # state, neighbors, conflicts
+        self.intersection_tools = all_tools[:4]  # state, neighbors, signal, adjust
+        self.coordinator_tools = [all_tools[0], all_tools[1], all_tools[4]]  # state, neighbors, conflicts
 
         # Create LLM instances
         # Use fast_model for all agents to avoid rate limiting on smart_model
@@ -385,8 +390,8 @@ class TrafficControlCrew:
                                 if ix_id in role:
                                     decisions[ix_id] = parsed
                                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to parse CrewAI tasks_output: %s", e, exc_info=True)
 
         # Fallback: parse the raw result string
         if not decisions:

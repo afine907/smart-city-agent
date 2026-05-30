@@ -4,6 +4,8 @@ LLM Client — Unified interface for LLM API calls.
 Supports OpenAI, Qwen, LongCat, and other OpenAI-compatible APIs.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import time
@@ -75,6 +77,14 @@ class LLMClient:
         self.config = config or LLMConfig()
         self._total_cost = 0.0
         self._total_calls = 0
+
+        # Create reusable OpenAI client
+        import openai
+        self._client = openai.OpenAI(
+            api_key=self.config.api_key,
+            base_url=self.config.api_base,
+            timeout=self.config.timeout,
+        )
     
     def chat(
         self,
@@ -97,19 +107,11 @@ class LLMClient:
         Returns:
             LLMResponse with content and metadata
         """
-        import openai
-        
         model = model or self.config.fast_model
         start_time = time.time()
-        
+
         try:
-            client = openai.OpenAI(
-                api_key=self.config.api_key,
-                base_url=self.config.api_base,
-                timeout=self.config.timeout,
-            )
-            
-            response = client.chat.completions.create(
+            response = self._client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -119,15 +121,15 @@ class LLMClient:
                 max_tokens=max_tokens,
             )
             
-            content = response.choices[0].message.content
-            tokens_in = response.usage.prompt_tokens
-            tokens_out = response.usage.completion_tokens
+            content = response.choices[0].message.content or ""
+            tokens_in = response.usage.prompt_tokens if response.usage else 0
+            tokens_out = response.usage.completion_tokens if response.usage else 0
             latency = (time.time() - start_time) * 1000
-            
+
             cost = self._calculate_cost(tokens_in, tokens_out, model)
             self._total_cost += cost
             self._total_calls += 1
-            
+
             return LLMResponse(
                 content=content,
                 model=model,

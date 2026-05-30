@@ -11,6 +11,9 @@ Usage:
     adjustment = pipeline.decide(detector_data, signal_state, trend)
 """
 
+from __future__ import annotations
+
+
 from typing import Any, Dict, List, Optional
 
 from traffic_agent.llm.client import LLMClient, LLMConfig
@@ -88,9 +91,15 @@ class TimingDecisionPipeline:
         cached = self.cache.get(cache_key)
         if cached is not None and isinstance(cached, TimingAdjustment):
             self._layer2_hits += 1
-            cached.source = "cache"
-            self._record_adjustment(cached, intersection_id)
-            return cached
+            # Return a copy to avoid mutating the cached object
+            result = TimingAdjustment(
+                adjustment=cached.adjustment,
+                reasoning=cached.reasoning,
+                confidence=cached.confidence,
+                source="cache",
+            )
+            self._record_adjustment(result, intersection_id)
+            return result
 
         # Layer 3: LLM
         llm_result = self._call_llm(

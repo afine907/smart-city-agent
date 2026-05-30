@@ -10,6 +10,9 @@ Supports:
 - Computing traffic trends over a sliding window
 """
 
+from __future__ import annotations
+
+
 import json
 from collections import deque
 from dataclasses import dataclass, field
@@ -148,9 +151,15 @@ class DetectorSimulator:
         readings = {}
         ped_per_dir = pedestrian_waits // 4
 
+        # Default lane object with queue=0 for missing lanes
+        class _DefaultLane:
+            queue = 0
+
+        _default = _DefaultLane()
+
         for i, direction in enumerate(self.DIRECTIONS):
             vehicle_count = sum(
-                lanes.get(i, {}).get(lt, type("", (), {"queue": 0})()).queue
+                lanes.get(i, {}).get(lt, _default).queue
                 for lt in ["left", "through", "right"]
             )
             readings[direction] = DetectorReading(
