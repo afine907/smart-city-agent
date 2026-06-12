@@ -29,10 +29,13 @@ class RuleOnlyPipeline:
 
     def get_stats(self):
         total = max(1, self._stats["total_decisions"])
+        # All decisions are free (rule engine or fallback), no LLM cost
+        free_decisions = self._stats["total_decisions"]
         return {
             **self._stats,
             "rule_rate": self._stats["layer1_rules"] / total,
             "layer2_cache": 0,
             "layer3_llm": 0,
-            "free_rate": 1.0,
+            "free_decisions": free_decisions,
+            "free_rate": free_decisions / total,
         }

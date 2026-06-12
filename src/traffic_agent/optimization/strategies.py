@@ -21,6 +21,12 @@ class StrategyDecision:
     confidence: float  # 0.0 to 1.0
     strategy_name: str
 
+    def __post_init__(self):
+        # Clamp adjustment to ±10s for safety
+        self.adjustment = max(-10.0, min(10.0, self.adjustment))
+        # Clamp confidence to [0, 1]
+        self.confidence = max(0.0, min(1.0, self.confidence))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "adjustment": self.adjustment,
